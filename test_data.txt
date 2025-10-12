@@ -1,0 +1,2 @@
+Hello, CryptoCore! This is a test message for AES encryption in C implementation.
+Test data for round-trip verification.
