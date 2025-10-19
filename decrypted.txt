@@ -1,1 +1,0 @@
-Hello, CryptoCore! This is a test message for AES encryption.
