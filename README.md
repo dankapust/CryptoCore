@@ -1,39 +1,34 @@
 # CryptoCore
-Минималистичный криптопровайдер: AES-128 в режимах ECB, CBC, CFB, OFB, CTR. CLI-утилита на C.
+Минималистичный криптопровайдер: AES-128 в режимах ECB, CBC, CFB, OFB, CTR. Python-CLI.
 
-## Сборка и установка
+## Сборка и установка (Python)
 
-### Требования
-- GCC или совместимый компилятор C
-- OpenSSL библиотека (libcrypto)
-- Make
-
-### Установка зависимостей
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install build-essential libssl-dev
+### Быстрый старт (Windows)
+```bat
+build_py.bat
 ```
 
-**CentOS/RHEL:**
+### Быстрый старт (Linux/macOS)
 ```bash
-sudo yum install gcc openssl-devel make
+python -m pip install -r requirements.txt
+bash run_tests_py.sh
 ```
 
-**Windows (MSYS2):**
+### Запуск Python-CLI
 ```bash
-pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-openssl make
+python -m pycryptocore.cli --algorithm aes --mode ecb --encrypt --key 000102030405060708090a0b0c0d0e0f --input test_data.txt --output test.enc
+python -m pycryptocore.cli --algorithm aes --mode ecb --decrypt --key 000102030405060708090a0b0c0d0e0f --input test.enc --output test_dec.txt
 ```
 
-### Сборка
-```bash
-make
-```
+CLI-скрипт также доступен как команда `cryptocore` при установке из `pyproject.toml`.
 
-### Установка (опционально)
-```bash
-sudo make install
-```
+## Поддерживаемые режимы и обработка IV
+
+- ecb — без IV; используется PKCS#7 padding
+- cbc — генерируется случайный IV; padding PKCS#7
+- cfb — потоковый режим; без padding
+- ofb — потоковый режим; без padding
+- ctr — потоковый режим; без padding
 
 ## Примеры использования
 
@@ -57,12 +52,9 @@ sudo make install
 ./cryptocore --algorithm aes --mode cbc --decrypt --key 000102030405060708090a0b0c0d0e0f --input cipher.bin --output decrypted.txt
 ```
 
-### Поддерживаемые режимы
-- **ecb** (без IV) - Electronic Codebook
-- **cbc** - Cipher Block Chaining
-- **cfb** - Cipher Feedback
-- **ofb** - Output Feedback
-- **ctr** - Counter
+### Работа с IV
+- При шифровании (режимы cbc/cfb/ofb/ctr) IV генерируется автоматически и записывается в начало файла
+- При дешифровании: если `--iv` не указан, IV читается из первых 16 байт входного файла
 
 ## Формат файла при шифровании по паролю
 - Первые 16 байт: соль (salt)
@@ -71,16 +63,21 @@ sudo make install
 
 ## OpenSSL interoperability
 
-CryptoCore полностью совместим с OpenSSL для режима ECB:
+Интероперабельность с OpenSSL для режима ECB и режимов с IV (при ручном указании IV):
 
 ```bash
-# Шифрование с OpenSSL, дешифрование с CryptoCore
+# Шифрование с OpenSSL, дешифрование с CryptoCore (ECB)
 openssl enc -aes-128-ecb -K 000102030405060708090a0b0c0d0e0f -in plain.txt -out cipher.bin -nopad
 ./cryptocore --algorithm aes --mode ecb --decrypt --key 000102030405060708090a0b0c0d0e0f --input cipher.bin --output decrypted.txt
 
-# Шифрование с CryptoCore, дешифрование с OpenSSL
+# Шифрование с CryptoCore, дешифрование с OpenSSL (ECB)
 ./cryptocore --algorithm aes --mode ecb --encrypt --key 000102030405060708090a0b0c0d0e0f --input plain.txt --output cipher.bin
 openssl enc -aes-128-ecb -K 000102030405060708090a0b0c0d0e0f -in cipher.bin -out decrypted.txt -d -nopad
+
+# Пример для CBC: дешифрование с OpenSSL (IV извлечь из начала файла)
+dd if=cipher.bin of=iv.bin bs=16 count=1
+dd if=cipher.bin of=ciphertext_only.bin bs=16 skip=1
+openssl enc -aes-128-cbc -d -K 000102030405060708090a0b0c0d0e0f -iv $(xxd -p iv.bin | tr -d '\n') -in ciphertext_only.bin -out decrypted.txt
 ```
 
 ## Зависимости

@@ -1,0 +1,15 @@
+[project]
+name = "pycryptocore"
+version = "0.1.0"
+description = "Python rewrite of CryptoCore (AES-128 ECB/CBC/CFB/OFB/CTR)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "pycryptodome==3.20.0",
+]
+
+[project.scripts]
+cryptocore = "pycryptocore.cli:main"
+cryptocore-py = "pycryptocore.cli:main"
+
+
