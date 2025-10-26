@@ -1,8 +1,8 @@
 from typing import Optional, Tuple, List
 
 from Crypto.Cipher import AES
-from Crypto.Random import get_random_bytes
 from Crypto.Util.Padding import pad, unpad
+from .csprng import generate_random_bytes
 
 
 KEY_SIZE = 16  # AES-128
@@ -23,7 +23,7 @@ def _split_blocks(data: bytes, block_size: int = BLOCK_SIZE) -> List[bytes]:
 
 
 def _ensure_iv(iv: Optional[bytes]) -> bytes:
-    return iv if iv is not None else get_random_bytes(IV_SIZE)
+    return iv if iv is not None else generate_random_bytes(IV_SIZE)
 
 
 def ecb_encrypt(key: bytes, plaintext: bytes) -> bytes:

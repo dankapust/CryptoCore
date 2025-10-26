@@ -16,6 +16,7 @@ from .file_io import (
     write_with_iv,
     read_with_iv,
 )
+from .csprng import generate_random_bytes, detect_weak_key
 
 
 def _hex_to_bytes(hex_str: str, expected_len: Optional[int] = None) -> bytes:
@@ -37,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     op.add_argument("--encrypt", action="store_true", help="Encrypt")
     op.add_argument("--decrypt", action="store_true", help="Decrypt")
 
-    keygrp = p.add_mutually_exclusive_group(required=True)
+    keygrp = p.add_mutually_exclusive_group(required=False)
     keygrp.add_argument("--key", help="Hex-encoded key (16 bytes)")
     keygrp.add_argument("--password", help="Password for PBKDF2")
 
@@ -72,8 +73,22 @@ def main(argv: Optional[list[str]] = None) -> int:
                     # ECB: salt + ciphertext (no iv)
                     out_path = args.output or (str(args.input) + ".enc")
                     write_all_bytes(out_path, salt + ciphertext)
-            else:
+            elif args.key:
                 key = _hex_to_bytes(args.key, expected_len=KEY_SIZE)
+                reason = detect_weak_key(key)
+                if reason:
+                    print(f"[WARN] Weak key detected: {reason}", file=sys.stderr)
+                ciphertext, iv = aes_encrypt(args.mode, key, in_bytes, None)
+                if iv is not None:
+                    out_path = args.output or (str(args.input) + ".enc")
+                    write_with_iv(out_path, iv, ciphertext)
+                else:
+                    out_path = args.output or (str(args.input) + ".enc")
+                    write_all_bytes(out_path, ciphertext)
+            else:
+                # No key or password provided: generate random key
+                key = generate_random_bytes(KEY_SIZE)
+                print(f"[INFO] Generated random key: {key.hex()}")
                 ciphertext, iv = aes_encrypt(args.mode, key, in_bytes, None)
                 if iv is not None:
                     out_path = args.output or (str(args.input) + ".enc")
@@ -99,7 +114,13 @@ def main(argv: Optional[list[str]] = None) -> int:
                 out_path = args.output or (str(args.input) + ".dec")
                 write_all_bytes(out_path, plaintext)
             else:
+                if not args.key:
+                    print("--key is required for decryption when --password is not provided", file=sys.stderr)
+                    return 1
                 key = _hex_to_bytes(args.key, expected_len=KEY_SIZE)
+                reason = detect_weak_key(key)
+                if reason:
+                    print(f"[WARN] Weak key detected: {reason}", file=sys.stderr)
                 if args.mode == "ecb":
                     plaintext = aes_decrypt(args.mode, key, in_bytes, None)
                 else:

@@ -47,6 +47,17 @@ python -m pycryptocore.cli --algorithm aes --mode cbc --decrypt --password 1234 
 python -m pycryptocore.cli --algorithm aes --mode cbc --encrypt --key 000102030405060708090a0b0c0d0e0f --input plain.txt --output cipher.bin
 ```
 
+### Шифрование с автоматической генерацией ключа (Sprint 3)
+Если ключ `--key` не указан и не используется пароль `--password`, при шифровании генерируется случайный 16-байтовый ключ (AES‑128) и выводится в stdout:
+```bash
+python -m pycryptocore.cli --algorithm aes --mode ctr --encrypt --input plaintext.txt --output ciphertext.bin
+> [INFO] Generated random key: 1a2b3c4d5e6f7890fedcba9876543210
+```
+Затем выполните дешифрование, указав напечатанный ключ:
+```bash
+python -m pycryptocore.cli --algorithm aes --mode ctr --decrypt --key 1a2b3c4d5e6f7890fedcba9876543210 --input ciphertext.bin --output decrypted.txt
+```
+
 ### Дешифрование по ключу (IV берётся из файла или указывается явно)
 ```bash
 python -m pycryptocore.cli --algorithm aes --mode cbc --decrypt --key 000102030405060708090a0b0c0d0e0f --input cipher.bin --output decrypted.txt
@@ -147,5 +158,25 @@ project_root/
 - **Режимы**: ECB, CBC, CFB, OFB, CTR
 - **Padding**: PKCS#7
 - **Key Derivation**: PBKDF2 с SHA-256 (100,000 итераций)
-- **IV Generation**: Криптографически стойкий генератор случайных чисел (Crypto.Random)
+- **IV Generation**: Криптографически стойкий генератор случайных чисел (OS CSPRNG через `os.urandom`)
+- **CSPRNG**: Модуль `pycryptocore/csprng.py`, функция `generate_random_bytes(num_bytes)` использует `os.urandom()`.
+  - Ключи и все IV генерируются через этот модуль.
+  - При шифровании без `--key`/`--password` генерируется 16-байтовый ключ и печатается в stdout ровно один раз.
+  - При вводе слабого ключа (все байты одинаковые, последовательные байты) печатается предупреждение в stderr.
+
+## NIST Statistical Test Suite (STS)
+
+Для статистической проверки качества CSPRNG:
+
+1. Сгенерируйте бинарный файл с случайными данными (пример 10 МБ):
+```bash
+python -c "from pycryptocore.csprng import generate_random_bytes; open('nist_test_data.bin', 'wb').write(generate_random_bytes(10_000_000))"
+```
+2. Скачайте и соберите NIST STS (C-версию) с сайта NIST и запустите `assess`:
+```bash
+./assess 10000000
+```
+3. Следуйте интерактивным подсказкам, укажите файл `nist_test_data.bin`.
+4. Критерии успеха: большинство тестов проходит (p-value ≥ 0.01). Небольшое количество провалов статистически допустимо.
+
 - **Совместимость**: Полная интероперабельность с OpenSSL для ECB режима

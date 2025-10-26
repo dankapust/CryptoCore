@@ -2,7 +2,7 @@ from typing import Tuple
 
 from Crypto.Hash import SHA256
 from Crypto.Protocol.KDF import PBKDF2
-from Crypto.Random import get_random_bytes
+from .csprng import generate_random_bytes
 
 
 KEY_SIZE = 16
@@ -19,6 +19,6 @@ def derive_key_from_password(password: str, salt: bytes) -> bytes:
 
 
 def generate_salt() -> bytes:
-    return get_random_bytes(SALT_SIZE)
+    return generate_random_bytes(SALT_SIZE)
 
 

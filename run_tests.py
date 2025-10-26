@@ -62,7 +62,5 @@ print()
 print("=" * 60)
 print("[OK] Python tests passed")
 print("=" * 60)
-print()
-print("📸 СДЕЛАЙТЕ СКРИНШОТ ЭТОГО ОКНА!")
 
 
