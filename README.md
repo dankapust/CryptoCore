@@ -63,6 +63,23 @@ python -m pycryptocore.cli --algorithm aes --mode ctr --decrypt --key 1a2b3c4d5e
 python -m pycryptocore.cli --algorithm aes --mode cbc --decrypt --key 000102030405060708090a0b0c0d0e0f --input cipher.bin --output decrypted.txt
 ```
 
+## Вычисление хеш-сумм (dgst)
+
+Новый сабкоманд `dgst` для вычисления дайджестов:
+
+```bash
+# SHA-256
+python -m pycryptocore.cli dgst --algorithm sha256 --input document.pdf
+
+# SHA3-256
+python -m pycryptocore.cli dgst --algorithm sha3-256 --input backup.tar --output backup.sha3
+```
+
+Формат вывода — совместим со стандартом *sum: `HASH  PATH`.
+Алгоритмы:
+- sha256 — реализован с нуля (FIPS 180-4), потоковая обработка, hex в нижнем регистре
+- sha3-256 — через vetted библиотеку `hashlib` (FIPS 202), потоковая обработка
+
 ### Работа с IV
 - При шифровании (режимы cbc/cfb/ofb/ctr) IV генерируется автоматически и записывается в начало файла
 - При дешифровании: если `--iv` не указан, IV читается из первых 16 байт входного файла

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from .crypto_core import aes_encrypt, aes_decrypt, KEY_SIZE
+from .hash import SHA256, SHA3_256
 from .kdf import derive_key_from_password, generate_salt
 from .file_io import (
     read_all_bytes,
@@ -31,26 +32,77 @@ def _hex_to_bytes(hex_str: str, expected_len: Optional[int] = None) -> bytes:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="CryptoCore (Python) - AES-128 modes")
-    p.add_argument("--algorithm", required=True, choices=["aes"], help="Algorithm")
-    p.add_argument("--mode", required=True, choices=["ecb", "cbc", "cfb", "ofb", "ctr"], help="Mode")
+    sub = p.add_subparsers(dest="command", required=False)
 
-    op = p.add_mutually_exclusive_group(required=True)
+    # encrypt/decrypt subparser (default/main path for backward compat)
+    p_main = sub.add_parser("", add_help=False) if False else p  # keep same top-level args for AES
+    p_main.add_argument("--algorithm", required=True, choices=["aes"], help="Algorithm")
+    p_main.add_argument("--mode", required=True, choices=["ecb", "cbc", "cfb", "ofb", "ctr"], help="Mode")
+    op = p_main.add_mutually_exclusive_group(required=True)
     op.add_argument("--encrypt", action="store_true", help="Encrypt")
     op.add_argument("--decrypt", action="store_true", help="Decrypt")
-
-    keygrp = p.add_mutually_exclusive_group(required=False)
+    keygrp = p_main.add_mutually_exclusive_group(required=False)
     keygrp.add_argument("--key", help="Hex-encoded key (16 bytes)")
     keygrp.add_argument("--password", help="Password for PBKDF2")
+    p_main.add_argument("--iv", help="Hex-encoded IV (16 bytes) [decrypt only, if needed]")
+    p_main.add_argument("--input", required=True, help="Input file")
+    p_main.add_argument("--output", help="Output file")
 
-    p.add_argument("--iv", help="Hex-encoded IV (16 bytes) [decrypt only, if needed]")
-    p.add_argument("--input", required=True, help="Input file")
-    p.add_argument("--output", help="Output file")
+    # dgst subcommand
+    dg = sub.add_parser("dgst", help="Compute message digest (hash)")
+    dg.add_argument("--algorithm", required=True, choices=["sha256", "sha3-256"], help="Digest algorithm")
+    dg.add_argument("--input", required=True, help="Input file")
+    dg.add_argument("--output", help="Write hash to file instead of stdout")
     return p
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    # Handle 'dgst' subcommand explicitly to keep backward compatibility for AES flags
+    tokens = argv if argv is not None else sys.argv[1:]
+    if tokens and tokens[0] == "dgst":
+        dgst_parser = argparse.ArgumentParser(description="CryptoCore (Python) - dgst (message digests)")
+        dgst_parser.add_argument("--algorithm", required=True, choices=["sha256", "sha3-256"], help="Digest algorithm")
+        dgst_parser.add_argument("--input", required=True, help="Input file")
+        dgst_parser.add_argument("--output", help="Write hash to file instead of stdout")
+        dgst_args = dgst_parser.parse_args(tokens[1:])
+        try:
+            algo = dgst_args.algorithm
+            in_path = Path(dgst_args.input)
+            with in_path.open("rb") as data_iter:
+                if algo == "sha256":
+                    hasher = SHA256()
+                    while True:
+                        chunk = data_iter.read(8192)
+                        if not chunk:
+                            break
+                        hasher.update(chunk)
+                    digest_hex = hasher.hexdigest()
+                elif algo == "sha3-256":
+                    hasher = SHA3_256()
+                    while True:
+                        chunk = data_iter.read(8192)
+                        if not chunk:
+                            break
+                        hasher.update(chunk)
+                    digest_hex = hasher.hexdigest()
+                else:
+                    print("Unsupported digest algorithm", file=sys.stderr)
+                    return 1
+            line = f"{digest_hex}  {str(in_path)}"
+            if dgst_args.output:
+                Path(dgst_args.output).write_text(line + "\n", encoding="utf-8")
+            else:
+                print(line)
+            return 0
+        except FileNotFoundError:
+            print("Input file not found", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(tokens)
 
     if args.algorithm != "aes":
         print("Invalid algorithm", file=sys.stderr)
