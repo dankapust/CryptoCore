@@ -8,6 +8,7 @@ from typing import Optional
 
 from .crypto_core import aes_encrypt, aes_decrypt, KEY_SIZE
 from .hash import SHA256, SHA3_256
+from .mac import HMAC
 from .kdf import derive_key_from_password, generate_salt
 from .file_io import (
     read_all_bytes,
@@ -53,6 +54,9 @@ def build_parser() -> argparse.ArgumentParser:
     dg.add_argument("--algorithm", required=True, choices=["sha256", "sha3-256"], help="Digest algorithm")
     dg.add_argument("--input", required=True, help="Input file")
     dg.add_argument("--output", help="Write hash to file instead of stdout")
+    dg.add_argument("--hmac", action="store_true", help="Enable HMAC mode")
+    dg.add_argument("--key", help="Hex-encoded key for HMAC (required when --hmac is used)")
+    dg.add_argument("--verify", help="Verify HMAC against value in specified file")
     return p
 
 
@@ -64,36 +68,107 @@ def main(argv: Optional[list[str]] = None) -> int:
         dgst_parser.add_argument("--algorithm", required=True, choices=["sha256", "sha3-256"], help="Digest algorithm")
         dgst_parser.add_argument("--input", required=True, help="Input file")
         dgst_parser.add_argument("--output", help="Write hash to file instead of stdout")
+        dgst_parser.add_argument("--hmac", action="store_true", help="Enable HMAC mode")
+        dgst_parser.add_argument("--key", help="Hex-encoded key for HMAC (required when --hmac is used)")
+        dgst_parser.add_argument("--verify", help="Verify HMAC against value in specified file")
         dgst_args = dgst_parser.parse_args(tokens[1:])
+        
         try:
+            # Validate HMAC requirements
+            if dgst_args.hmac:
+                if not dgst_args.key:
+                    print("--key is required when --hmac is specified", file=sys.stderr)
+                    return 1
+                if dgst_args.algorithm != "sha256":
+                    print("HMAC currently only supports sha256 algorithm", file=sys.stderr)
+                    return 1
+            
             algo = dgst_args.algorithm
             in_path = Path(dgst_args.input)
-            with in_path.open("rb") as data_iter:
-                if algo == "sha256":
-                    hasher = SHA256()
-                    while True:
-                        chunk = data_iter.read(8192)
-                        if not chunk:
-                            break
-                        hasher.update(chunk)
-                    digest_hex = hasher.hexdigest()
-                elif algo == "sha3-256":
-                    hasher = SHA3_256()
-                    while True:
-                        chunk = data_iter.read(8192)
-                        if not chunk:
-                            break
-                        hasher.update(chunk)
-                    digest_hex = hasher.hexdigest()
-                else:
-                    print("Unsupported digest algorithm", file=sys.stderr)
+            
+            if dgst_args.hmac:
+                # HMAC mode
+                try:
+                    key_bytes = _hex_to_bytes(dgst_args.key, expected_len=None)  # HMAC supports arbitrary key length
+                except SystemExit:
+                    print("Invalid hex string for --key", file=sys.stderr)
                     return 1
-            line = f"{digest_hex}  {str(in_path)}"
-            if dgst_args.output:
-                Path(dgst_args.output).write_text(line + "\n", encoding="utf-8")
+                
+                hmac = HMAC(key_bytes, "sha256")
+                
+                # Process file in chunks for memory efficiency
+                chunks = []
+                with in_path.open("rb") as data_iter:
+                    while True:
+                        chunk = data_iter.read(8192)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                
+                hmac_hex = hmac.update_compute_hex(chunks)
+                line = f"{hmac_hex}  {str(in_path)}"
+                
+                # Handle verification
+                if dgst_args.verify:
+                    verify_path = Path(dgst_args.verify)
+                    if not verify_path.exists():
+                        print(f"Verification file not found: {verify_path}", file=sys.stderr)
+                        return 1
+                    
+                    verify_content = verify_path.read_text(encoding="utf-8").strip()
+                    # Parse expected HMAC (flexible: extract hex value, ignore filename/whitespace)
+                    verify_parts = verify_content.split()
+                    expected_hmac = None
+                    for part in verify_parts:
+                        if len(part) == 64 and all(c in "0123456789abcdef" for c in part.lower()):
+                            expected_hmac = part.lower()
+                            break
+                    
+                    if expected_hmac is None:
+                        print("Could not parse HMAC value from verification file", file=sys.stderr)
+                        return 1
+                    
+                    if hmac_hex.lower() == expected_hmac.lower():
+                        print("[OK] HMAC verification successful")
+                        return 0
+                    else:
+                        print("[ERROR] HMAC verification failed", file=sys.stderr)
+                        return 1
+                
+                # Output HMAC
+                if dgst_args.output:
+                    Path(dgst_args.output).write_text(line + "\n", encoding="utf-8")
+                else:
+                    print(line)
+                return 0
             else:
-                print(line)
-            return 0
+                # Regular hash mode
+                with in_path.open("rb") as data_iter:
+                    if algo == "sha256":
+                        hasher = SHA256()
+                        while True:
+                            chunk = data_iter.read(8192)
+                            if not chunk:
+                                break
+                            hasher.update(chunk)
+                        digest_hex = hasher.hexdigest()
+                    elif algo == "sha3-256":
+                        hasher = SHA3_256()
+                        while True:
+                            chunk = data_iter.read(8192)
+                            if not chunk:
+                                break
+                            hasher.update(chunk)
+                        digest_hex = hasher.hexdigest()
+                    else:
+                        print("Unsupported digest algorithm", file=sys.stderr)
+                        return 1
+                line = f"{digest_hex}  {str(in_path)}"
+                if dgst_args.output:
+                    Path(dgst_args.output).write_text(line + "\n", encoding="utf-8")
+                else:
+                    print(line)
+                return 0
         except FileNotFoundError:
             print("Input file not found", file=sys.stderr)
             return 1

@@ -80,6 +80,76 @@ python -m pycryptocore.cli dgst --algorithm sha3-256 --input backup.tar --output
 - sha256 — реализован с нуля (FIPS 180-4), потоковая обработка, hex в нижнем регистре
 - sha3-256 — через vetted библиотеку `hashlib` (FIPS 202), потоковая обработка
 
+## HMAC (Message Authentication Code)
+
+Команда `dgst` поддерживает вычисление HMAC для обеспечения целостности и аутентичности данных.
+
+### Генерация HMAC
+
+```bash
+# Генерация HMAC-SHA256
+python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key 00112233445566778899aabbccddeeff --input message.txt
+
+# Сохранение HMAC в файл
+python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key 00112233445566778899aabbccddeeff --input message.txt --output message.hmac
+```
+
+**Параметры:**
+- `--hmac` — включает режим HMAC (обязателен для вычисления HMAC)
+- `--key KEY` — ключ в hex-формате (обязателен при использовании `--hmac`). Ключ может быть произвольной длины
+- `--algorithm sha256` — поддерживается только SHA-256 для HMAC
+- `--input FILE` — входной файл
+- `--output FILE` — (опционально) сохранить HMAC в файл вместо вывода в stdout
+
+**Формат вывода:** `HMAC_VALUE  INPUT_FILE_PATH` (совместим со стандартным форматом)
+
+### Проверка HMAC
+
+```bash
+# Проверка HMAC с помощью --verify
+python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key 00112233445566778899aabbccddeeff --input message.txt --verify expected.hmac
+
+# При успешной проверке выводится: [OK] HMAC verification successful
+# При неудаче: [ERROR] HMAC verification failed (exit code 1)
+```
+
+**Параметры:**
+- `--verify FILE` — файл с ожидаемым значением HMAC (в формате `HMAC_VALUE  FILENAME`)
+
+### Примеры использования
+
+```bash
+# Пример 1: Генерация и проверка HMAC
+python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b --input test.txt > test.hmac
+python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b --input test.txt --verify test.hmac
+
+# Пример 2: Обнаружение изменений в файле
+python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key mykey123 --input document.pdf --output doc.hmac
+# ... файл изменен ...
+python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key mykey123 --input document.pdf --verify doc.hmac
+# Вывод: [ERROR] HMAC verification failed
+```
+
+### Реализация HMAC
+
+- **HMAC реализован с нуля** по спецификации RFC 2104
+- Использует SHA-256 из Sprint 4 как базовую хеш-функцию
+- Поддерживает ключи произвольной длины:
+  - Ключи длиннее блока (64 байта для SHA-256) хешируются
+  - Ключи короче блока дополняются нулями
+- Потоковая обработка файлов (обработка по частям для экономии памяти)
+- Формула: `HMAC(K, m) = H((K ⊕ opad) || H((K ⊕ ipad) || m))`
+  - `H` — SHA-256
+  - `opad` — 0x5c повторенный 64 раза
+  - `ipad` — 0x36 повторенный 64 раза
+
+### Безопасность HMAC
+
+HMAC обеспечивает:
+- **Целостность данных** — любое изменение файла приведет к другому HMAC
+- **Аутентичность** — только владелец правильного ключа может вычислить корректный HMAC
+- **Защиту от подмены** — злоумышленник не может создать валидный HMAC без знания ключа
+
 ### Работа с IV
 - При шифровании (режимы cbc/cfb/ofb/ctr) IV генерируется автоматически и записывается в начало файла
 - При дешифровании: если `--iv` не указан, IV читается из первых 16 байт входного файла
@@ -146,6 +216,8 @@ python run_tests.py
 - Данные после дешифрования совпадают с исходными
 - Интероперабельность с OpenSSL для режима ECB
 - Работа с ключами и паролями
+- Хеш-функции (SHA-256, SHA3-256) с тестовыми векторами NIST
+- HMAC с тестовыми векторами RFC 4231 и проверкой целостности данных
 
 ## Структура проекта
 
@@ -156,9 +228,20 @@ project_root/
 │   ├── cli.py            # CLI интерфейс
 │   ├── crypto_core.py    # Криптографические функции
 │   ├── file_io.py        # Файловый ввод/вывод
-│   └── kdf.py            # Key Derivation Function (PBKDF2)
+│   ├── kdf.py            # Key Derivation Function (PBKDF2)
+│   ├── csprng.py         # CSPRNG (os.urandom)
+│   ├── hash/             # Хеш-функции
+│   │   ├── __init__.py
+│   │   ├── sha256.py
+│   │   └── sha3_256.py
+│   └── mac/              # Message Authentication Code
+│       ├── __init__.py
+│       └── hmac.py
 ├── tests/                 # Тесты
-│   └── test_python_cli.py
+│   ├── test_python_cli.py
+│   ├── test_csprng.py
+│   ├── test_hash.py
+│   └── test_hmac.py
 ├── pyproject.toml        # Конфигурация Python
 ├── requirements.txt      # Зависимости
 ├── build_py.bat          # Скрипт сборки (Windows)
@@ -196,4 +279,6 @@ python -c "from pycryptocore.csprng import generate_random_bytes; open('nist_tes
 3. Следуйте интерактивным подсказкам, укажите файл `nist_test_data.bin`.
 4. Критерии успеха: большинство тестов проходит (p-value ≥ 0.01). Небольшое количество провалов статистически допустимо.
 
+- **Хеш-функции**: SHA-256 (реализован с нуля, FIPS 180-4), SHA3-256 (hashlib, FIPS 202)
+- **HMAC**: Реализован с нуля по RFC 2104, использует SHA-256, поддерживает ключи произвольной длины
 - **Совместимость**: Полная интероперабельность с OpenSSL для ECB режима
