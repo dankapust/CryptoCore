@@ -39,3 +39,19 @@ def read_with_iv(file_path: str | Path) -> Tuple[bytes, bytes]:
     return data[:16], data[16:]
 
 
+def write_with_nonce_tag(file_path: str | Path, nonce: bytes, ciphertext: bytes, tag: bytes) -> None:
+    """Write GCM format: nonce (12 bytes) || ciphertext || tag (16 bytes)"""
+    write_all_bytes(file_path, nonce + ciphertext + tag)
+
+
+def read_with_nonce_tag(file_path: str | Path) -> Tuple[bytes, bytes, bytes]:
+    """Read GCM format: nonce (12 bytes) || ciphertext || tag (16 bytes)"""
+    data = read_all_bytes(file_path)
+    if len(data) < 28:  # 12 (nonce) + 16 (tag) minimum
+        raise ValueError("file too short; missing nonce or tag")
+    nonce = data[:12]
+    tag = data[-16:]
+    ciphertext = data[12:-16]
+    return nonce, ciphertext, tag
+
+

@@ -29,6 +29,7 @@ CLI-скрипт также доступен как команда `cryptocore` 
 - cfb — потоковый режим; без padding
 - ofb — потоковый режим; без padding
 - ctr — потоковый режим; без padding
+- gcm — аутентифицированное шифрование (AEAD); без padding; nonce 12 байт, tag 16 байт
 
 ## Примеры использования
 
@@ -80,9 +81,100 @@ python -m pycryptocore.cli dgst --algorithm sha3-256 --input backup.tar --output
 - sha256 — реализован с нуля (FIPS 180-4), потоковая обработка, hex в нижнем регистре
 - sha3-256 — через vetted библиотеку `hashlib` (FIPS 202), потоковая обработка
 
-## HMAC (Message Authentication Code)
+## GCM (Galois/Counter Mode) - Аутентифицированное шифрование
 
-Команда `dgst` поддерживает вычисление HMAC для обеспечения целостности и аутентичности данных.
+GCM — режим аутентифицированного шифрования (AEAD), который обеспечивает одновременно конфиденциальность и аутентичность данных.
+
+### Основные возможности
+
+- **Аутентифицированное шифрование**: Одновременное шифрование и проверка целостности
+- **AAD (Associated Authenticated Data)**: Поддержка дополнительных аутентифицированных данных
+- **Катастрофический отказ**: При неправильной аутентификации дешифрование полностью блокируется
+
+### Шифрование с GCM
+
+```bash
+# Базовое шифрование
+python -m pycryptocore.cli --algorithm aes --mode gcm --encrypt --key 00112233445566778899aabbccddeeff --input sample.txt --output ciphertext.bin
+
+# Шифрование с AAD
+python -m pycryptocore.cli --algorithm aes --mode gcm --encrypt --key 00112233445566778899aabbccddeeff --aad aabbccddeeff --input sample.txt --output ciphertext.bin
+```
+
+**Параметры:**
+- `--mode gcm` — включает режим GCM
+- `--aad DATA` — (опционально) Associated Authenticated Data в hex-формате
+- `--key KEY` — ключ AES-128 в hex-формате (16 байт)
+
+### Дешифрование с GCM
+
+```bash
+# Дешифрование с правильным AAD
+python -m pycryptocore.cli --algorithm aes --mode gcm --decrypt --key 00112233445566778899aabbccddeeff --aad aabbccddeeff --input ciphertext.bin --output decrypted.txt
+
+# При успешной аутентификации: [OK] Done. Output file: decrypted.txt
+# При неудаче: [ERROR] Authentication failed: AAD mismatch or ciphertext tampered (exit code 1)
+```
+
+**Важно:**
+- AAD при дешифровании должен точно совпадать с AAD при шифровании
+- При неправильной аутентификации выходной файл **не создается**
+- Любое изменение ciphertext или tag приведет к отказу аутентификации
+
+### Примеры использования
+
+```bash
+# Пример 1: Шифрование и дешифрование с AAD
+python -m pycryptocore.cli --algorithm aes --mode gcm --encrypt --key 00112233445566778899aabbccddeeff --aad aabbccddeeff --input sample.txt --output sample_encrypted.bin
+python -m pycryptocore.cli --algorithm aes --mode gcm --decrypt --key 00112233445566778899aabbccddeeff --aad aabbccddeeff --input sample_encrypted.bin --output sample_decrypted.txt
+
+# Пример 2: Обнаружение подмены данных
+python -m pycryptocore.cli --algorithm aes --mode gcm --encrypt --key 00112233445566778899aabbccddeeff --input sample.txt --output sample_encrypted.bin
+# ... файл изменен (например, через hex-редактор) ...
+python -m pycryptocore.cli --algorithm aes --mode gcm --decrypt --key 00112233445566778899aabbccddeeff --input sample_encrypted.bin --output should_fail.txt
+# Вывод: [ERROR] Authentication failed: AAD mismatch or ciphertext tampered
+# Файл should_fail.txt не создан
+```
+
+### Реализация GCM
+
+- **GCM реализован с нуля** по спецификации NIST SP 800-38D
+- Использует AES в CTR режиме для шифрования
+- Реализует GHASH с умножением в поле Галуа GF(2^128)
+- Неприводимый многочлен: x^128 + x^7 + x^2 + x + 1
+- Nonce: 12 байт (96 бит, рекомендуется)
+- Tag: 16 байт (128 бит)
+
+### Безопасность GCM
+
+GCM обеспечивает:
+- **Конфиденциальность**: Данные зашифрованы с помощью AES-CTR
+- **Аутентичность**: Проверка целостности через GHASH и тег
+- **Защиту от подмены**: Любое изменение данных или AAD обнаруживается
+- **Катастрофический отказ**: При неудачной аутентификации никакие данные не выводятся
+
+**Предупреждения:**
+- ⚠️ **Никогда не используйте один и тот же nonce дважды** с одним ключом
+- ⚠️ **AAD должен точно совпадать** при шифровании и дешифровании
+- ⚠️ **При неудачной аутентификации не пытайтесь использовать частично расшифрованные данные**
+
+## HMAC и CMAC (Message Authentication Code)
+
+Команда `dgst` поддерживает вычисление HMAC и AES-CMAC для обеспечения целостности и аутентичности данных.
+
+### HMAC (Hash-based Message Authentication Code)
+
+HMAC использует хеш-функцию (SHA-256) для создания MAC.
+
+### AES-CMAC (Cipher-based Message Authentication Code)
+
+CMAC использует блочный шифр (AES-128) для создания MAC. Реализован по NIST SP 800-38B.
+
+**Особенности:**
+- Использует AES-128 (ключ 16 байт)
+- MAC размером 16 байт (128 бит)
+- Более эффективен для коротких сообщений по сравнению с HMAC
+- Подходит для встроенных систем с ограниченными ресурсами
 
 ### Генерация HMAC
 
@@ -94,27 +186,49 @@ python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key 0011223344556677
 python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key 00112233445566778899aabbccddeeff --input message.txt --output message.hmac
 ```
 
-**Параметры:**
+**Параметры для HMAC:**
 - `--hmac` — включает режим HMAC (обязателен для вычисления HMAC)
 - `--key KEY` — ключ в hex-формате (обязателен при использовании `--hmac`). Ключ может быть произвольной длины
 - `--algorithm sha256` — поддерживается только SHA-256 для HMAC
 - `--input FILE` — входной файл
 - `--output FILE` — (опционально) сохранить HMAC в файл вместо вывода в stdout
 
-**Формат вывода:** `HMAC_VALUE  INPUT_FILE_PATH` (совместим со стандартным форматом)
+**Параметры для CMAC:**
+- `--cmac` — включает режим AES-CMAC (обязателен для вычисления CMAC)
+- `--key KEY` — ключ AES-128 в hex-формате (обязателен при использовании `--cmac`). Ключ должен быть 16 байт (32 hex символа)
+- `--algorithm` — игнорируется для CMAC (используется AES)
+- `--input FILE` — входной файл
+- `--output FILE` — (опционально) сохранить CMAC в файл вместо вывода в stdout
 
-### Проверка HMAC
+**Формат вывода:** `MAC_VALUE  INPUT_FILE_PATH` (совместим со стандартным форматом)
+- HMAC: 64 hex символа (256 бит)
+- CMAC: 32 hex символа (128 бит)
+
+### Генерация CMAC
+
+```bash
+# Генерация AES-CMAC
+python -m pycryptocore.cli dgst --algorithm sha256 --cmac --key 2b7e151628aed2a6abf7158809cf4f3c --input message.txt
+
+# Сохранение CMAC в файл
+python -m pycryptocore.cli dgst --algorithm sha256 --cmac --key 2b7e151628aed2a6abf7158809cf4f3c --input message.txt --output message.cmac
+```
+
+### Проверка HMAC/CMAC
 
 ```bash
 # Проверка HMAC с помощью --verify
 python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key 00112233445566778899aabbccddeeff --input message.txt --verify expected.hmac
 
-# При успешной проверке выводится: [OK] HMAC verification successful
-# При неудаче: [ERROR] HMAC verification failed (exit code 1)
+# Проверка CMAC с помощью --verify
+python -m pycryptocore.cli dgst --algorithm sha256 --cmac --key 2b7e151628aed2a6abf7158809cf4f3c --input message.txt --verify expected.cmac
+
+# При успешной проверке выводится: [OK] HMAC/CMAC verification successful
+# При неудаче: [ERROR] HMAC/CMAC verification failed (exit code 1)
 ```
 
 **Параметры:**
-- `--verify FILE` — файл с ожидаемым значением HMAC (в формате `HMAC_VALUE  FILENAME`)
+- `--verify FILE` — файл с ожидаемым значением HMAC/CMAC (в формате `MAC_VALUE  FILENAME`)
 
 ### Примеры использования
 
@@ -123,11 +237,21 @@ python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key 0011223344556677
 python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b --input test.txt > test.hmac
 python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b --input test.txt --verify test.hmac
 
-# Пример 2: Обнаружение изменений в файле
+# Пример 2: Генерация и проверка CMAC
+python -m pycryptocore.cli dgst --algorithm sha256 --cmac --key 2b7e151628aed2a6abf7158809cf4f3c --input test.txt > test.cmac
+python -m pycryptocore.cli dgst --algorithm sha256 --cmac --key 2b7e151628aed2a6abf7158809cf4f3c --input test.txt --verify test.cmac
+
+# Пример 3: Обнаружение изменений в файле (HMAC)
 python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key mykey123 --input document.pdf --output doc.hmac
 # ... файл изменен ...
 python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key mykey123 --input document.pdf --verify doc.hmac
 # Вывод: [ERROR] HMAC verification failed
+
+# Пример 4: Обнаружение изменений в файле (CMAC)
+python -m pycryptocore.cli dgst --algorithm sha256 --cmac --key 2b7e151628aed2a6abf7158809cf4f3c --input document.pdf --output doc.cmac
+# ... файл изменен ...
+python -m pycryptocore.cli dgst --algorithm sha256 --cmac --key 2b7e151628aed2a6abf7158809cf4f3c --input document.pdf --verify doc.cmac
+# Вывод: [ERROR] CMAC verification failed
 ```
 
 ### Реализация HMAC
@@ -143,16 +267,34 @@ python -m pycryptocore.cli dgst --algorithm sha256 --hmac --key mykey123 --input
   - `opad` — 0x5c повторенный 64 раза
   - `ipad` — 0x36 повторенный 64 раза
 
-### Безопасность HMAC
+### Реализация AES-CMAC
 
-HMAC обеспечивает:
-- **Целостность данных** — любое изменение файла приведет к другому HMAC
-- **Аутентичность** — только владелец правильного ключа может вычислить корректный HMAC
-- **Защиту от подмены** — злоумышленник не может создать валидный HMAC без знания ключа
+- **CMAC реализован с нуля** по спецификации NIST SP 800-38B
+- Использует AES-128 как базовый блочный шифр
+- Ключ должен быть 16 байт (AES-128)
+- Генерирует подключи K1 и K2 для обработки последнего блока
+- Потоковая обработка файлов (обработка по частям для экономии памяти)
+- Алгоритм:
+  - Полные блоки обрабатываются через CBC-MAC
+  - Последний полный блок XOR с K1 перед финальным шифрованием
+  - Неполный последний блок дополняется и XOR с K2 перед финальным шифрованием
 
-### Работа с IV
+### Безопасность HMAC и CMAC
+
+HMAC и CMAC обеспечивают:
+- **Целостность данных** — любое изменение файла приведет к другому MAC
+- **Аутентичность** — только владелец правильного ключа может вычислить корректный MAC
+- **Защиту от подмены** — злоумышленник не может создать валидный MAC без знания ключа
+
+**Сравнение HMAC и CMAC:**
+- **HMAC**: Использует хеш-функцию, ключ произвольной длины, MAC 256 бит (SHA-256)
+- **CMAC**: Использует блочный шифр, ключ 16 байт, MAC 128 бит, более эффективен для коротких сообщений
+
+### Работа с IV и Nonce
 - При шифровании (режимы cbc/cfb/ofb/ctr) IV генерируется автоматически и записывается в начало файла
 - При дешифровании: если `--iv` не указан, IV читается из первых 16 байт входного файла
+- Для GCM режима: nonce (12 байт) генерируется автоматически и включается в выходной файл
+- Формат GCM файла: nonce (12 байт) || ciphertext || tag (16 байт)
 
 ## Формат файла при шифровании по паролю
 - Первые 16 байт: соль (salt)
@@ -189,7 +331,7 @@ openssl enc -aes-128-ecb -d -K 000102030405060708090a0b0c0d0e0f -in cipher.bin -
 python run_tests.py
 ```
 
-Скрипт автоматически протестирует все 5 режимов шифрования и покажет результаты.
+Скрипт автоматически протестирует все 6 режимов шифрования и покажет результаты.
 
 ## Зависимости
 - Python 3.8 или выше
@@ -212,12 +354,14 @@ python run_tests.py
 ```
 
 ### Что проверяют тесты
-- Корректность шифрования и последующего дешифрования для всех поддерживаемых режимов (ECB, CBC, CFB, OFB, CTR)
+- Корректность шифрования и последующего дешифрования для всех поддерживаемых режимов (ECB, CBC, CFB, OFB, CTR, GCM)
 - Данные после дешифрования совпадают с исходными
 - Интероперабельность с OpenSSL для режима ECB
 - Работа с ключами и паролями
 - Хеш-функции (SHA-256, SHA3-256) с тестовыми векторами NIST
 - HMAC с тестовыми векторами RFC 4231 и проверкой целостности данных
+- AES-CMAC с тестовыми векторами NIST SP 800-38B и проверкой целостности данных
+- GCM с проверкой аутентификации, обнаружением подмены данных и работы с AAD
 
 ## Структура проекта
 
@@ -234,14 +378,19 @@ project_root/
 │   │   ├── __init__.py
 │   │   ├── sha256.py
 │   │   └── sha3_256.py
-│   └── mac/              # Message Authentication Code
+│   ├── mac/              # Message Authentication Code
+│   │   ├── __init__.py
+│   │   ├── hmac.py
+│   │   └── cmac.py
+│   └── modes/            # Authenticated Encryption Modes
 │       ├── __init__.py
-│       └── hmac.py
+│       └── gcm.py
 ├── tests/                 # Тесты
 │   ├── test_python_cli.py
 │   ├── test_csprng.py
 │   ├── test_hash.py
-│   └── test_hmac.py
+│   ├── test_hmac.py
+│   └── test_gcm.py
 ├── pyproject.toml        # Конфигурация Python
 ├── requirements.txt      # Зависимости
 ├── build_py.bat          # Скрипт сборки (Windows)
@@ -255,7 +404,7 @@ project_root/
 ## Технические детали
 
 - **Алгоритм**: AES-128
-- **Режимы**: ECB, CBC, CFB, OFB, CTR
+- **Режимы**: ECB, CBC, CFB, OFB, CTR, GCM
 - **Padding**: PKCS#7
 - **Key Derivation**: PBKDF2 с SHA-256 (100,000 итераций)
 - **IV Generation**: Криптографически стойкий генератор случайных чисел (OS CSPRNG через `os.urandom`)
@@ -281,4 +430,6 @@ python -c "from pycryptocore.csprng import generate_random_bytes; open('nist_tes
 
 - **Хеш-функции**: SHA-256 (реализован с нуля, FIPS 180-4), SHA3-256 (hashlib, FIPS 202)
 - **HMAC**: Реализован с нуля по RFC 2104, использует SHA-256, поддерживает ключи произвольной длины
+- **AES-CMAC**: Реализован с нуля по NIST SP 800-38B, использует AES-128, ключ 16 байт
+- **GCM**: Реализован с нуля по NIST SP 800-38D, аутентифицированное шифрование с поддержкой AAD
 - **Совместимость**: Полная интероперабельность с OpenSSL для ECB режима

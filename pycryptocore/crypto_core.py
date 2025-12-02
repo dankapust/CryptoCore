@@ -3,6 +3,7 @@ from typing import Optional, Tuple, List
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 from .csprng import generate_random_bytes
+from .modes.gcm import GCM, AuthenticationError
 
 
 KEY_SIZE = 16  # AES-128
@@ -156,7 +157,7 @@ def ctr_decrypt(key: bytes, ciphertext: bytes, iv: bytes) -> bytes:
     return bytes(out)
 
 
-def aes_encrypt(mode: str, key: bytes, plaintext: bytes, iv: Optional[bytes] = None) -> Tuple[bytes, Optional[bytes]]:
+def aes_encrypt(mode: str, key: bytes, plaintext: bytes, iv: Optional[bytes] = None, aad: Optional[bytes] = None) -> Tuple[bytes, Optional[bytes]]:
     if len(key) != KEY_SIZE:
         raise CryptoCoreError("Invalid key length; expected 16 bytes for AES-128")
     mode_lc = mode.lower()
@@ -170,10 +171,17 @@ def aes_encrypt(mode: str, key: bytes, plaintext: bytes, iv: Optional[bytes] = N
         return ofb_encrypt(key, plaintext, iv)
     if mode_lc == "ctr":
         return ctr_encrypt(key, plaintext, iv)
+    if mode_lc == "gcm":
+        if aad is None:
+            aad = b""
+        gcm = GCM(key, nonce=iv)
+        result = gcm.encrypt(plaintext, aad)
+        # GCM returns nonce || ciphertext || tag, nonce is already included
+        return result, None
     raise CryptoCoreError(f"Unsupported mode: {mode}")
 
 
-def aes_decrypt(mode: str, key: bytes, ciphertext: bytes, iv: Optional[bytes] = None) -> bytes:
+def aes_decrypt(mode: str, key: bytes, ciphertext: bytes, iv: Optional[bytes] = None, aad: Optional[bytes] = None) -> bytes:
     if len(key) != KEY_SIZE:
         raise CryptoCoreError("Invalid key length; expected 16 bytes for AES-128")
     mode_lc = mode.lower()
@@ -195,6 +203,23 @@ def aes_decrypt(mode: str, key: bytes, ciphertext: bytes, iv: Optional[bytes] = 
         if iv is None:
             raise CryptoCoreError("IV is required for CTR")
         return ctr_decrypt(key, ciphertext, iv)
+    if mode_lc == "gcm":
+        if aad is None:
+            aad = b""
+        # For GCM, ciphertext format is: nonce (12 bytes) || ciphertext || tag (16 bytes)
+        # If iv is provided, it means nonce was provided separately via --iv
+        if iv is not None:
+            # Nonce was provided separately, so ciphertext is just ciphertext || tag
+            # We need to prepend nonce
+            data = iv + ciphertext
+        else:
+            # Nonce is included in ciphertext (first 12 bytes)
+            data = ciphertext
+        gcm = GCM(key, nonce=None)  # nonce will be extracted from data in decrypt
+        try:
+            return gcm.decrypt(data, aad)
+        except AuthenticationError as e:
+            raise CryptoCoreError(str(e))
     raise CryptoCoreError(f"Unsupported mode: {mode}")
 
 
