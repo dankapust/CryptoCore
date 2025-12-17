@@ -254,6 +254,44 @@ python -m pycryptocore.cli dgst --algorithm sha256 --cmac --key 2b7e151628aed2a6
 # Вывод: [ERROR] CMAC verification failed
 ```
 
+## derive (KDF) — PBKDF2 и иерархия ключей
+
+### Концепты
+- **Key stretching**: удлиняет/усиливает пароль через многократные итерации (PBKDF2).
+- **Salt**: случайные байты, защищают от радужных таблиц; минимум 16 байт, храните рядом с выводом.
+- **Iteration count**: повышает стоимость подбора. Минимум 100k; для production рассматривайте 300k–600k+ (замерьте производительность).
+- **Context separation**: `derive_key(master_key, context)` выдаёт разные ключи для разных целей (например, "encryption" / "authentication").
+
+### Команда derive (PBKDF2-HMAC-SHA256)
+```bash
+# Базовое использование с заданной солью
+python -m pycryptocore.cli derive --password "MySecurePassword123!" --salt a1b2c3d4e5f601234567890123456789 --iterations 100000 --length 32
+
+# Автогенерация соли (16 байт)
+python -m pycryptocore.cli derive --password "AnotherPassword" --iterations 500000 --length 16
+
+# С чтением пароля из переменной среды
+python -m pycryptocore.cli derive --password-env APP_PWD --length 32
+
+# Запись ключа в файл (сырой бинарник)
+python -m pycryptocore.cli derive --password "app_key" --salt 00112233445566778899aabbccddeeff --length 32 --output app_key.bin
+```
+
+**Аргументы:**
+- `--password` | `--password-file` | `--password-env` — укажите ровно один источник пароля.
+- `--salt HEX` — соль в hex; если опущено, генерируется 16 байт через CSPRNG.
+- `--iterations` — по умолчанию 100000; допускает большие значения (≥1e6).
+- `--length` — длина выводимого ключа (байты), по умолчанию 32.
+- `--algorithm` — сейчас только `pbkdf2`.
+- `--output FILE` — сохранить ключ в файл (raw bytes). В stdout всегда печатается `KEY_HEX  SALT_HEX`.
+
+**Формат stdout:** `DERIVED_KEY_HEX  SALT_HEX` (через два пробела).
+
+**Безопасность:**
+- Не переиспользуйте одну пару `(password, salt)`; соль должна быть уникальной.
+- Повышайте `--iterations` на продуктиве и фиксируйте значение в конфиге.
+- Соль не секретна, но пароль должен очищаться после использования (CLI делает best-effort).
+
 ### Реализация HMAC
 
 - **HMAC реализован с нуля** по спецификации RFC 2104
@@ -372,7 +410,10 @@ project_root/
 │   ├── cli.py            # CLI интерфейс
 │   ├── crypto_core.py    # Криптографические функции
 │   ├── file_io.py        # Файловый ввод/вывод
-│   ├── kdf.py            # Key Derivation Function (PBKDF2)
+│   ├── kdf/              # Key Derivation Functions
+│   │   ├── __init__.py
+│   │   ├── pbkdf2.py     # PBKDF2-HMAC-SHA256 (с нуля)
+│   │   └── hierarchy.py  # HMAC-based key hierarchy derivation
 │   ├── csprng.py         # CSPRNG (os.urandom)
 │   ├── hash/             # Хеш-функции
 │   │   ├── __init__.py

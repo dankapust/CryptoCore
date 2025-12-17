@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import binascii
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -9,7 +10,13 @@ from typing import Optional
 from .crypto_core import aes_encrypt, aes_decrypt, KEY_SIZE, CryptoCoreError
 from .hash import SHA256, SHA3_256
 from .mac import HMAC, CMAC
-from .kdf import derive_key_from_password, generate_salt
+from .kdf import (
+    PBKDF2_ITERATIONS,
+    SALT_SIZE,
+    derive_key_from_password,
+    generate_salt,
+    pbkdf2_hmac_sha256,
+)
 from .file_io import (
     read_all_bytes,
     write_all_bytes,
@@ -65,8 +72,68 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    # Handle 'dgst' subcommand explicitly to keep backward compatibility for AES flags
+    # Handle 'derive' subcommand (KDF)
     tokens = argv if argv is not None else sys.argv[1:]
+    if tokens and tokens[0] == "derive":
+        derive_parser = argparse.ArgumentParser(description="CryptoCore (Python) - derive (PBKDF2-HMAC-SHA256)")
+        derive_parser.add_argument("--password", help="Password string (use quotes if needed)")
+        derive_parser.add_argument("--password-file", help="Read password from file")
+        derive_parser.add_argument("--password-env", help="Read password from environment variable")
+        derive_parser.add_argument("--salt", help="Salt as hex string (if omitted, 16 random bytes are generated)")
+        derive_parser.add_argument("--iterations", type=int, default=PBKDF2_ITERATIONS, help=f"Iteration count (default: {PBKDF2_ITERATIONS})")
+        derive_parser.add_argument("--length", type=int, default=32, help="Derived key length in bytes (default: 32)")
+        derive_parser.add_argument("--algorithm", choices=["pbkdf2"], default="pbkdf2", help="KDF algorithm (only pbkdf2 supported)")
+        derive_parser.add_argument("--output", help="Write derived key as raw bytes to file")
+        derive_args = derive_parser.parse_args(tokens[1:])
+
+        # Resolve password source
+        password_sources = [x for x in [derive_args.password, derive_args.password_file, derive_args.password_env] if x]
+        if len(password_sources) != 1:
+            print("Provide exactly one password source: --password or --password-file or --password-env", file=sys.stderr)
+            return 1
+
+        if derive_args.password_file:
+            pwd_str = Path(derive_args.password_file).read_text(encoding="utf-8")
+        elif derive_args.password_env:
+            env_val = os.getenv(derive_args.password_env)
+            if env_val is None:
+                print(f"Environment variable not set: {derive_args.password_env}", file=sys.stderr)
+                return 1
+            pwd_str = env_val
+        else:
+            pwd_str = derive_args.password or ""
+
+        if derive_args.iterations <= 0:
+            print("iterations must be positive", file=sys.stderr)
+            return 1
+        if derive_args.length <= 0:
+            print("length must be positive", file=sys.stderr)
+            return 1
+
+        if derive_args.salt:
+            try:
+                salt = _hex_to_bytes(derive_args.salt)
+            except SystemExit:
+                print("Invalid hex string for --salt", file=sys.stderr)
+                return 1
+        else:
+            salt = generate_salt(SALT_SIZE)
+
+        # Derive key
+        derived_key = pbkdf2_hmac_sha256(pwd_str, salt, derive_args.iterations, derive_args.length)
+
+        # Output raw key to file if requested
+        if derive_args.output:
+            Path(derive_args.output).write_bytes(derived_key)
+
+        # Print hex encodings to stdout
+        print(f"{derived_key.hex()}  {salt.hex()}")
+
+        # Best-effort cleanup
+        pwd_str = ""
+        return 0
+
+    # Handle 'dgst' subcommand explicitly to keep backward compatibility for AES flags
     if tokens and tokens[0] == "dgst":
         dgst_parser = argparse.ArgumentParser(description="CryptoCore (Python) - dgst (message digests)")
         dgst_parser.add_argument("--algorithm", required=True, choices=["sha256", "sha3-256"], help="Digest algorithm")
