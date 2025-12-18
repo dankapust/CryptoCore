@@ -10,6 +10,7 @@ from pycryptocore.cli import main
 
 PLAINTEXT = b"Hello, CryptoCore! This is a test message for AES encryption."
 KEY = "000102030405060708090a0b0c0d0e0f"
+# Тестируем все режимы, включая ECB (для совместимости с исходным проектом)
 MODES = ["ecb", "cbc", "cfb", "ofb", "ctr"]
 
 print("=" * 60)
@@ -48,13 +49,21 @@ with tempfile.TemporaryDirectory() as d:
         else:
             print("FAIL")
             continue
-        
+
+        # Проверка результата: пытаемся прочитать файл и сравнить содержимое
         print(f"[{m.upper()}] Проверка...", end=" ")
-        with open(dec, "rb") as f:
-            if f.read() == PLAINTEXT:
+        try:
+            with open(dec, "rb") as f:
+                data = f.read()
+
+            if data == PLAINTEXT:
                 print("PASS ✓")
             else:
-                print("FAIL ✗")
+                print("FAIL ✗ (content mismatch)")
+        except FileNotFoundError:
+            print("FAIL ✗ (decrypted file not found)")
+        except Exception as e:
+            print(f"FAIL ✗ ({e})")
         print()
 
 print("-" * 60)

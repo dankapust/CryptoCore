@@ -421,10 +421,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 if reason:
                     print(f"[WARN] Weak key detected: {reason}", file=sys.stderr)
                 if args.mode == "ecb":
-                    # ECB: просто расшифровываем весь вход и записываем результат в файл
                     plaintext = aes_decrypt(args.mode, key, in_bytes, None, aad_bytes)
-                    out_path = args.output or (str(args.input) + ".dec")
-                    write_all_bytes(out_path, plaintext)
                 elif args.mode == "gcm":
                     # GCM: format is nonce (12 bytes) || ciphertext || tag (16 bytes)
                     if args.iv:

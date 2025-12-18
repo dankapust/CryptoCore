@@ -1,3 +1,11 @@
+Metadata-Version: 2.4
+Name: pycryptocore
+Version: 0.1.0
+Summary: Python rewrite of CryptoCore (AES-128 ECB/CBC/CFB/OFB/CTR)
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: pycryptodome==3.20.0
+
 # CryptoCore
 Минималистичный криптопровайдер: AES-128 в режимах ECB, CBC, CFB, OFB, CTR. Python-CLI.
 
@@ -8,16 +16,10 @@
 build_py.bat
 ```
 
-### Быстрый старт (Linux/macOS / Ubuntu 24.04)
+### Быстрый старт (Linux/macOS)
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-
-python3 -m pip install --upgrade pip
-python3 -m pip install -r requirements.txt
-python3 -m pip install .
-
-pytest
+python -m pip install -r requirements.txt
+bash run_tests_py.sh
 ```
 
 ### Запуск Python-CLI
@@ -365,11 +367,17 @@ openssl enc -aes-128-ecb -d -K 000102030405060708090a0b0c0d0e0f -in cipher.bin -
 
 Для быстрой проверки работоспособности проекта:
 
+**Windows:**
 ```bash
-python3 run_tests.py
+ПРОВЕРКА.bat
 ```
 
-Скрипт автоматически протестирует основные режимы шифрования и покажет результаты.
+**Linux/macOS или Python:**
+```bash
+python run_tests.py
+```
+
+Скрипт автоматически протестирует все 6 режимов шифрования и покажет результаты.
 
 ## Зависимости
 - Python 3.8 или выше
@@ -377,23 +385,21 @@ python3 run_tests.py
 
 ## Тесты
 
-Для проверки корректности реализации предусмотрены два уровня автотестов.
+Для проверки корректности реализации режимов шифрования и дешифрования предусмотрены автотесты.
 
-### Быстрый набор
-
+### Как запустить тесты
 ```bash
-python3 run_tests.py
+# Windows
+python run_tests.py
+
+# Linux/macOS
+bash run_tests_py.sh
+
+# Или просто
+python run_tests.py
 ```
 
-Скрипт проверяет корректность шифрования/дешифрования для основных режимов AES.
-
-### Полный набор (pytest)
-
-```bash
-pytest
-```
-
-Этот прогон запускает все тесты в каталоге `tests/` и покрывает:
+### Что проверяют тесты
 - Корректность шифрования и последующего дешифрования для всех поддерживаемых режимов (ECB, CBC, CFB, OFB, CTR, GCM)
 - Данные после дешифрования совпадают с исходными
 - Интероперабельность с OpenSSL для режима ECB
@@ -428,25 +434,18 @@ project_root/
 │   └── modes/            # Authenticated Encryption Modes
 │       ├── __init__.py
 │       └── gcm.py
-├── tests/                 # Тесты (pytest)
+├── tests/                 # Тесты
 │   ├── test_python_cli.py
 │   ├── test_csprng.py
 │   ├── test_hash.py
 │   ├── test_hmac.py
-│   ├── test_cmac.py
-│   ├── test_gcm.py
-│   ├── test_pbkdf2.py
-│   ├── test_cli_derive.py
-│   └── test_openssl_interop.py
-├── docs/                  # Документация (Sprint 8)
-│   ├── API.md
-│   ├── USERGUIDE.md
-│   └── DEVELOPMENT.md
+│   └── test_gcm.py
 ├── pyproject.toml        # Конфигурация Python
 ├── requirements.txt      # Зависимости
 ├── build_py.bat          # Скрипт сборки (Windows)
 ├── run_tests_py.sh       # Скрипт тестирования (Linux/macOS)
 ├── run_tests.py          # Скрипт тестирования (Python)
+├── ПРОВЕРКА.bat          # Скрипт быстрой проверки
 ├── test_data.txt         # Тестовые данные
 └── README.md
 ```

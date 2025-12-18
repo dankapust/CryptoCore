@@ -22,7 +22,8 @@ def test_pbkdf2_rfc6070_sha256_vectors():
             b"saltSALTsaltSALTsaltSALTsaltSALTsalt",
             4096,
             40,
-            "348c89dbcbd306e86a72419c0cfeea4959999d24d8a1d0388dee36b8cf8cf0c0",
+            # Проверено against hashlib.pbkdf2_hmac('sha256', ...), Python 3.12
+            "348c89dbcbd32b2f32d814b8116e84cf2b17347ebc1800181c4e2a1fb8dd53e1c635518c7dac47e9",
         ),
     ]
     for pwd, salt, iterations, dklen, expected_hex in cases:
