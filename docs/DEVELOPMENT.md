@@ -1,5 +1,42 @@
 ## CryptoCore — руководство для разработчика
 
+### 0. Установка зависимостей
+
+#### Системные зависимости (Ubuntu/Debian)
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip openssl
+```
+
+**Проверка OpenSSL:**
+
+```bash
+openssl version
+```
+
+Если команда выдаёт ошибку "command not found", установите OpenSSL:
+
+```bash
+sudo apt install -y openssl
+```
+
+**Зачем нужен OpenSSL:**
+- Для тестов интероперабельности (`tests/test_openssl_interop.py`) — проверка совместимости AES-ECB между CryptoCore и OpenSSL.
+- Без OpenSSL эти тесты будут пропущены при запуске `pytest`, но основная функциональность CryptoCore работает без него.
+
+#### Python-зависимости
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
+python3 -m pip install .
+```
+
+---
+
 ### 1. Структура проекта
 
 ```text
@@ -28,8 +65,26 @@ pyproject.toml        # Конфигурация пакета / зависимо
 
 #### 2.1. Pytest
 
+**⚠️ ВАЖНО:** Перед запуском `pytest` убедитесь, что установлены все зависимости:
+
 ```bash
 source .venv/bin/activate
+
+# Проверка установки pycryptodome
+python3 -c "from Crypto.Cipher import AES; print('✓ pycryptodome установлен')"
+```
+
+Если команда выше выдаёт ошибку `ModuleNotFoundError: No module named 'Crypto'`, установите зависимости:
+
+```bash
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
+python3 -m pip install pytest
+```
+
+Затем запустите тесты:
+
+```bash
 pytest
 ```
 
@@ -41,7 +96,7 @@ pytest
 - HMAC / CMAC;
 - PBKDF2‑KDF и `derive`;
 - GCM (ядро + CLI, включая AAD и «катастрофический отказ»);
-- интероперабельность с OpenSSL (если установлен `openssl`);
+- интероперабельность с OpenSSL (требуется установленный `openssl` — см. раздел "Установка зависимостей");
 - CLI‑оболочку (`test_python_cli.py`, `test_cli_derive.py`, `test_gcm.py`).
 
 #### 2.2. Быстрые режимные тесты

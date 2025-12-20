@@ -14,6 +14,22 @@ sudo apt install -y \
   openssl
 ```
 
+**Проверка установки OpenSSL:**
+
+```bash
+openssl version
+```
+
+Если команда выдаёт ошибку "command not found", установите OpenSSL:
+
+```bash
+sudo apt install -y openssl
+```
+
+**Зачем нужен OpenSSL:**
+- Для тестов интероперабельности (`tests/test_openssl_interop.py`) — проверка совместимости AES-ECB между CryptoCore и OpenSSL.
+- Без OpenSSL эти тесты будут пропущены при запуске `pytest`, но основная функциональность CryptoCore работает без него.
+
 **Клонировать (или перейти в папку, если уже скачано):**
 
 ```bash
@@ -57,6 +73,22 @@ python3 run_tests.py
 
 **Полный набор pytest (все спринты + OpenSSL):**
 
+**⚠️ ВАЖНО:** Перед запуском `pytest` убедитесь, что установлены все зависимости:
+
+```bash
+# Проверка установки pycryptodome
+python3 -c "from Crypto.Cipher import AES; print('✓ pycryptodome установлен')"
+```
+
+Если команда выше выдаёт ошибку `ModuleNotFoundError: No module named 'Crypto'`, установите зависимости:
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 -m pip install pytest
+```
+
+Затем запустите тесты:
+
 ```bash
 pytest
 ```
@@ -65,9 +97,14 @@ pytest
 
 ### 2. AES: шифрование/дешифрование по ключу (CBC)
 
+**Примечание:** В примерах `plain.txt` — это имя вашего входного файла. Создайте его или используйте любой существующий файл.
+
 **Шифрование:**
 
 ```bash
+# Создайте тестовый файл (опционально)
+echo "Hello, CryptoCore!" > plain.txt
+
 python3 -m pycryptocore.cli --algorithm aes --mode cbc --encrypt \
   --key 000102030405060708090a0b0c0d0e0f \
   --input plain.txt --output cipher.bin
@@ -99,11 +136,16 @@ python3 -m pycryptocore.cli --algorithm aes --mode cbc --decrypt \
 
 ### 4. AES‑GCM с AAD
 
+**Примечание:** Создайте `plaintext.txt` или используйте любой существующий файл.
+
 ```bash
+# Создайте тестовый файл (опционально)
+echo "Secret message" > plaintext.txt
+
 python3 -m pycryptocore.cli --algorithm aes --mode gcm --encrypt \
   --key 00112233445566778899aabbccddeeff \
   --aad aabbccddeeff \
-  --input sample.txt --output sample_encrypted.bin
+  --input plaintext.txt --output encrypted.bin
 
 python3 -m pycryptocore.cli --algorithm aes --mode gcm --decrypt \
   --key 00112233445566778899aabbccddeeff \

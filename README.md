@@ -8,7 +8,29 @@
 build_py.bat
 ```
 
-### Быстрый старт (Linux/macOS / Ubuntu 24.04)
+### Быстрый старт (Linux/macOS / Ubuntu 24.04)
+
+**1. Установка системных пакетов:**
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip openssl
+```
+
+**Проверка OpenSSL:**
+
+```bash
+openssl version
+```
+
+Если команда выдаёт ошибку "command not found", установите OpenSSL:
+
+```bash
+sudo apt install -y openssl
+```
+
+**2. Установка проекта:**
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
@@ -20,9 +42,20 @@ python3 -m pip install .
 pytest
 ```
 
+**Примечание:** OpenSSL требуется для тестов интероперабельности (`tests/test_openssl_interop.py`). Без OpenSSL эти тесты будут пропущены, но основная функциональность CryptoCore работает без него.
+
 ### Запуск Python-CLI
+
+**Примечание:** В примерах ниже `plaintext.txt` — это имя вашего входного файла. Создайте его или используйте любой существующий файл.
+
 ```bash
-python -m pycryptocore.cli --algorithm aes --mode ecb --encrypt --key 000102030405060708090a0b0c0d0e0f --input test_data.txt --output test.enc
+# Создайте тестовый файл (опционально)
+echo "Hello, CryptoCore!" > plaintext.txt
+
+# Шифрование
+python -m pycryptocore.cli --algorithm aes --mode ecb --encrypt --key 000102030405060708090a0b0c0d0e0f --input plaintext.txt --output test.enc
+
+# Дешифрование
 python -m pycryptocore.cli --algorithm aes --mode ecb --decrypt --key 000102030405060708090a0b0c0d0e0f --input test.enc --output test_dec.txt
 ```
 
@@ -57,6 +90,7 @@ python -m pycryptocore.cli --algorithm aes --mode cbc --encrypt --key 0001020304
 ### Шифрование с автоматической генерацией ключа (Sprint 3)
 Если ключ `--key` не указан и не используется пароль `--password`, при шифровании генерируется случайный 16-байтовый ключ (AES‑128) и выводится в stdout:
 ```bash
+# Создайте тестовый файл перед запуском (если его нет)
 python -m pycryptocore.cli --algorithm aes --mode ctr --encrypt --input plaintext.txt --output ciphertext.bin
 > [INFO] Generated random key: 1a2b3c4d5e6f7890fedcba9876543210
 ```
@@ -101,10 +135,11 @@ GCM — режим аутентифицированного шифрования
 
 ```bash
 # Базовое шифрование
-python -m pycryptocore.cli --algorithm aes --mode gcm --encrypt --key 00112233445566778899aabbccddeeff --input sample.txt --output ciphertext.bin
+# Используйте любой существующий файл или создайте plaintext.txt перед запуском
+python -m pycryptocore.cli --algorithm aes --mode gcm --encrypt --key 00112233445566778899aabbccddeeff --input plaintext.txt --output ciphertext.bin
 
 # Шифрование с AAD
-python -m pycryptocore.cli --algorithm aes --mode gcm --encrypt --key 00112233445566778899aabbccddeeff --aad aabbccddeeff --input sample.txt --output ciphertext.bin
+python -m pycryptocore.cli --algorithm aes --mode gcm --encrypt --key 00112233445566778899aabbccddeeff --aad aabbccddeeff --input plaintext.txt --output ciphertext.bin
 ```
 
 **Параметры:**
@@ -131,13 +166,13 @@ python -m pycryptocore.cli --algorithm aes --mode gcm --decrypt --key 0011223344
 
 ```bash
 # Пример 1: Шифрование и дешифрование с AAD
-python -m pycryptocore.cli --algorithm aes --mode gcm --encrypt --key 00112233445566778899aabbccddeeff --aad aabbccddeeff --input sample.txt --output sample_encrypted.bin
-python -m pycryptocore.cli --algorithm aes --mode gcm --decrypt --key 00112233445566778899aabbccddeeff --aad aabbccddeeff --input sample_encrypted.bin --output sample_decrypted.txt
+python -m pycryptocore.cli --algorithm aes --mode gcm --encrypt --key 00112233445566778899aabbccddeeff --aad aabbccddeeff --input plaintext.txt --output encrypted.bin
+python -m pycryptocore.cli --algorithm aes --mode gcm --decrypt --key 00112233445566778899aabbccddeeff --aad aabbccddeeff --input encrypted.bin --output decrypted.txt
 
 # Пример 2: Обнаружение подмены данных
-python -m pycryptocore.cli --algorithm aes --mode gcm --encrypt --key 00112233445566778899aabbccddeeff --input sample.txt --output sample_encrypted.bin
+python -m pycryptocore.cli --algorithm aes --mode gcm --encrypt --key 00112233445566778899aabbccddeeff --input plaintext.txt --output encrypted.bin
 # ... файл изменен (например, через hex-редактор) ...
-python -m pycryptocore.cli --algorithm aes --mode gcm --decrypt --key 00112233445566778899aabbccddeeff --input sample_encrypted.bin --output should_fail.txt
+python -m pycryptocore.cli --algorithm aes --mode gcm --decrypt --key 00112233445566778899aabbccddeeff --input encrypted.bin --output should_fail.txt
 # Вывод: [ERROR] Authentication failed: AAD mismatch or ciphertext tampered
 # Файл should_fail.txt не создан
 ```
@@ -372,8 +407,19 @@ python3 run_tests.py
 Скрипт автоматически протестирует основные режимы шифрования и покажет результаты.
 
 ## Зависимости
-- Python 3.8 или выше
-- pycryptodome (устанавливается через requirements.txt)
+
+### Системные зависимости (Ubuntu/Debian)
+
+```bash
+sudo apt install -y python3 python3-venv python3-pip openssl
+```
+
+- **Python 3.8 или выше** — основной язык реализации
+- **openssl** — требуется для тестов интероперабельности CryptoCore ↔ OpenSSL (`tests/test_openssl_interop.py`). Без OpenSSL эти тесты будут пропущены при запуске `pytest`, но основная функциональность работает без него.
+
+### Python-зависимости
+
+- **pycryptodome** (устанавливается через `requirements.txt`) — используется для базового AES-примитива (как требуется в Sprint 1, CRY-2)
 
 ## Тесты
 
@@ -388,6 +434,23 @@ python3 run_tests.py
 Скрипт проверяет корректность шифрования/дешифрования для основных режимов AES.
 
 ### Полный набор (pytest)
+
+**⚠️ ВАЖНО:** Перед запуском `pytest` убедитесь, что установлены все зависимости:
+
+```bash
+# Проверка установки pycryptodome
+python3 -c "from Crypto.Cipher import AES; print('✓ pycryptodome установлен')"
+```
+
+Если команда выше выдаёт ошибку `ModuleNotFoundError: No module named 'Crypto'`, установите зависимости:
+
+```bash
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
+python3 -m pip install pytest
+```
+
+Для полной проверки всех реализованных функций (все спринты M1–M8, включая тесты интероперабельности с OpenSSL):
 
 ```bash
 pytest
@@ -447,7 +510,6 @@ project_root/
 ├── build_py.bat          # Скрипт сборки (Windows)
 ├── run_tests_py.sh       # Скрипт тестирования (Linux/macOS)
 ├── run_tests.py          # Скрипт тестирования (Python)
-├── test_data.txt         # Тестовые данные
 └── README.md
 ```
 

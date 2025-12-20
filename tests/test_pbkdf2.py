@@ -32,13 +32,15 @@ def test_pbkdf2_rfc6070_sha256_vectors():
 
 
 def test_pbkdf2_reproducible_and_length():
+    """Test reproducibility and length with reduced iterations for speed."""
     salt = generate_salt()
     pwd = "example-password"
-    key1 = pbkdf2_hmac_sha256(pwd, salt, PBKDF2_ITERATIONS, 32)
-    key2 = pbkdf2_hmac_sha256(pwd, salt, PBKDF2_ITERATIONS, 32)
+    test_iterations = 1000
+    key1 = pbkdf2_hmac_sha256(pwd, salt, test_iterations, 32)
+    key2 = pbkdf2_hmac_sha256(pwd, salt, test_iterations, 32)
     assert key1 == key2
     assert len(key1) == 32
-    short_key = pbkdf2_hmac_sha256(pwd, salt, PBKDF2_ITERATIONS, 1)
+    short_key = pbkdf2_hmac_sha256(pwd, salt, test_iterations, 1)
     assert len(short_key) == 1
 
 

@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory() as d:
         else:
             print("FAIL")
             continue
-
+        
         # Проверка результата: пытаемся прочитать файл и сравнить содержимое
         print(f"[{m.upper()}] Проверка...", end=" ")
         try:

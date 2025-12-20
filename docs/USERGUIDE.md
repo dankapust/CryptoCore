@@ -2,12 +2,28 @@
 
 ### 1. Установка
 
-#### 1.1. Зависимости (Ubuntu 24.04)
+#### 1.1. Зависимости (Ubuntu 24.04)
 
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv python3-pip openssl
 ```
+
+**Проверка установки OpenSSL:**
+
+```bash
+openssl version
+```
+
+Если команда выдаёт ошибку "command not found", установите OpenSSL:
+
+```bash
+sudo apt install -y openssl
+```
+
+**Зачем нужен OpenSSL:**
+- Для тестов интероперабельности (`tests/test_openssl_interop.py`) — проверка совместимости AES-ECB между CryptoCore и OpenSSL.
+- Без OpenSSL эти тесты будут пропущены при запуске `pytest`, но основная функциональность CryptoCore работает без него.
 
 #### 1.2. Установка проекта
 
@@ -173,8 +189,36 @@ cryptocore derive \
 
 ### 5. Диагностика и тесты
 
-- Быстрая проверка: `python3 run_tests.py`
-- Полный набор: `pytest`
-- Для проверки интероперабельности с OpenSSL должен быть установлен пакет `openssl`.
+**Быстрая проверка:**
+
+```bash
+python3 run_tests.py
+```
+
+**Полный набор pytest:**
+
+**⚠️ ВАЖНО:** Перед запуском `pytest` убедитесь, что установлены все зависимости:
+
+```bash
+# Проверка установки pycryptodome
+python3 -c "from Crypto.Cipher import AES; print('✓ pycryptodome установлен')"
+```
+
+Если команда выше выдаёт ошибку `ModuleNotFoundError: No module named 'Crypto'`, установите зависимости:
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 -m pip install pytest
+```
+
+Затем запустите тесты:
+
+```bash
+pytest
+```
+
+**Примечания:**
+- Для проверки интероперабельности с OpenSSL должен быть установлен пакет `openssl` (см. раздел "Установка").
+- Если `pycryptodome` не установлен, все тесты будут падать с ошибкой `ModuleNotFoundError: No module named 'Crypto'`.
 
 
