@@ -84,13 +84,31 @@ python3 -c "from Crypto.Cipher import AES; print('✓ pycryptodome устано�
 
 ```bash
 python3 -m pip install -r requirements.txt
-python3 -m pip install pytest
 ```
 
 Затем запустите тесты:
 
 ```bash
+# Тесты БЕЗ покрытия (быстрее)
+pytest --no-cov
+
+# Тесты С покрытием (по умолчанию, настроено в pytest.ini)
 pytest
+
+# Тесты с покрытием и детальным отчетом (показывает непокрытые строки)
+pytest --cov-report=term-missing
+
+# Тесты с покрытием и HTML-отчетом (создается в htmlcov/index.html)
+pytest --cov-report=html
+
+# Тесты с покрытием, детальным отчетом И HTML-отчетом
+pytest --cov-report=term-missing --cov-report=html
+
+# Запуск конкретного тестового файла
+pytest tests/test_crypto_core.py
+
+# Запуск конкретного теста
+pytest tests/test_crypto_core.py::test_aes_encrypt_ecb
 ```
 
 ---

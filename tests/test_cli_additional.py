@@ -1,8 +1,5 @@
 """
 Additional CLI tests to increase coverage to 90%+.
-
-Note: Some tests are slow due to PBKDF2 (10,000 iterations).
-Use pytest -m "not slow" to skip slow tests during development.
 """
 import os
 import tempfile
@@ -16,11 +13,7 @@ from pycryptocore.cli import main, _encrypt_streaming, _decrypt_streaming
 # These tests focus on CLI integration, not streaming performance
 STREAMING_TEST_SIZE = 2 * 1024 * 1024  # 2 MB - small enough to be fast, but tests file handling
 
-# Mark slow tests (those using PBKDF2 with password)
-pytestmark_slow = pytest.mark.slow
 
-
-@pytest.mark.slow
 def test_cli_encrypt_with_password_streaming(tmp_path):
     """Test encrypt with password using streaming mode."""
     # Create a file for testing (streaming functions tested separately)
@@ -86,7 +79,6 @@ def test_cli_encrypt_iv_warning(tmp_path, capsys):
     assert "--iv is not accepted during encryption" in captured.err
 
 
-@pytest.mark.slow
 def test_cli_decrypt_with_password_ecb(tmp_path):
     """Test decrypt with password in ECB mode."""
     test_file = tmp_path / "test.txt"
@@ -119,7 +111,6 @@ def test_cli_decrypt_with_password_ecb(tmp_path):
     assert decrypted_file.read_text() == "Hello, World!"
 
 
-@pytest.mark.slow
 def test_cli_decrypt_with_password_streaming(tmp_path):
     """Test decrypt with password using streaming mode."""
     # Create encrypted file first
@@ -225,7 +216,6 @@ def test_cli_weak_key_detection_decrypt(tmp_path, capsys):
     assert "[WARN] Weak key detected" in captured.err
 
 
-@pytest.mark.slow
 def test_cli_gcm_with_password_error(tmp_path):
     """Test GCM with password (should fail with error)."""
     test_file = tmp_path / "test.txt"
@@ -403,4 +393,245 @@ def test_cli_decrypt_password_file_too_short(tmp_path):
     ])
     
     assert result == 1
+
+
+def test_encrypt_streaming_direct_cbc_with_salt(tmp_path):
+    """Test _encrypt_streaming directly with CBC mode and salt."""
+    from pycryptocore.csprng import generate_random_bytes
+    from pycryptocore.kdf import SALT_SIZE
+    
+    test_file = tmp_path / "test.txt"
+    test_file.write_bytes(b"Hello, World! Test data for streaming encryption.")
+    output_file = tmp_path / "encrypted.bin"
+    key = generate_random_bytes(16)
+    salt = generate_random_bytes(SALT_SIZE)
+    
+    iv = _encrypt_streaming("cbc", key, test_file, output_file, None, None, salt)
+    
+    assert output_file.exists()
+    assert iv is not None
+    assert len(iv) == 16
+
+
+def test_encrypt_streaming_direct_cbc_without_salt(tmp_path):
+    """Test _encrypt_streaming directly with CBC mode without salt."""
+    from pycryptocore.csprng import generate_random_bytes
+    
+    test_file = tmp_path / "test.txt"
+    test_file.write_bytes(b"Hello, World! Test data.")
+    output_file = tmp_path / "encrypted.bin"
+    key = generate_random_bytes(16)
+    
+    iv = _encrypt_streaming("cbc", key, test_file, output_file, None, None, None)
+    
+    assert output_file.exists()
+    assert iv is not None
+
+
+def test_encrypt_streaming_direct_gcm(tmp_path):
+    """Test _encrypt_streaming directly with GCM mode (should raise error - GCM doesn't support streaming)."""
+    from pycryptocore.csprng import generate_random_bytes
+    from pycryptocore.crypto_core import CryptoCoreError
+    
+    test_file = tmp_path / "test.txt"
+    test_file.write_bytes(b"Hello, World! Test data for GCM.")
+    output_file = tmp_path / "encrypted.bin"
+    key = generate_random_bytes(16)
+    
+    # GCM doesn't support streaming mode, should raise error
+    with pytest.raises(CryptoCoreError, match="GCM streaming not yet implemented"):
+        _encrypt_streaming("gcm", key, test_file, output_file, None, None, None)
+
+
+def test_encrypt_streaming_direct_ecb_with_salt(tmp_path):
+    """Test _encrypt_streaming directly with ECB mode and salt."""
+    from pycryptocore.csprng import generate_random_bytes
+    from pycryptocore.kdf import SALT_SIZE
+    
+    test_file = tmp_path / "test.txt"
+    test_file.write_bytes(b"Hello, World!")
+    output_file = tmp_path / "encrypted.bin"
+    key = generate_random_bytes(16)
+    salt = generate_random_bytes(SALT_SIZE)
+    
+    iv = _encrypt_streaming("ecb", key, test_file, output_file, None, None, salt)
+    
+    assert output_file.exists()
+    # ECB doesn't use IV
+    assert iv is None
+
+
+def test_encrypt_streaming_error_handling(tmp_path):
+    """Test _encrypt_streaming error handling with non-existent file."""
+    from pycryptocore.csprng import generate_random_bytes
+    
+    non_existent = tmp_path / "nonexistent.txt"
+    output_file = tmp_path / "encrypted.bin"
+    key = generate_random_bytes(16)
+    
+    with pytest.raises(Exception):
+        _encrypt_streaming("cbc", key, non_existent, output_file, None, None, None)
+
+
+def test_decrypt_streaming_direct_cbc_with_salt(tmp_path):
+    """Test _decrypt_streaming directly with CBC mode and salt."""
+    from pycryptocore.csprng import generate_random_bytes
+    from pycryptocore.kdf import SALT_SIZE
+    from pycryptocore.crypto_core import aes_encrypt
+    from pycryptocore.file_io import write_with_salt_iv
+    
+    # First encrypt
+    plaintext = b"Hello, World! Test data for streaming decryption."
+    key = generate_random_bytes(16)
+    salt = generate_random_bytes(SALT_SIZE)
+    ciphertext, iv = aes_encrypt("cbc", key, plaintext, None, None)
+    
+    encrypted_file = tmp_path / "encrypted.bin"
+    write_with_salt_iv(encrypted_file, salt, iv, ciphertext)
+    
+    # Now decrypt
+    decrypted_file = tmp_path / "decrypted.txt"
+    _decrypt_streaming("cbc", key, encrypted_file, decrypted_file, None, None, salt)
+    
+    assert decrypted_file.exists()
+    assert decrypted_file.read_bytes() == plaintext
+
+
+def test_decrypt_streaming_direct_cbc_without_salt(tmp_path):
+    """Test _decrypt_streaming directly with CBC mode without salt."""
+    from pycryptocore.csprng import generate_random_bytes
+    from pycryptocore.crypto_core import aes_encrypt
+    from pycryptocore.file_io import write_with_iv
+    
+    # First encrypt
+    plaintext = b"Hello, World! Test data."
+    key = generate_random_bytes(16)
+    ciphertext, iv = aes_encrypt("cbc", key, plaintext, None, None)
+    
+    encrypted_file = tmp_path / "encrypted.bin"
+    write_with_iv(encrypted_file, iv, ciphertext)
+    
+    # Now decrypt - can pass IV or None (function will read from file if None)
+    decrypted_file = tmp_path / "decrypted.txt"
+    _decrypt_streaming("cbc", key, encrypted_file, decrypted_file, iv, None, None)
+    
+    assert decrypted_file.exists()
+    assert decrypted_file.read_bytes() == plaintext
+
+
+def test_decrypt_streaming_direct_ecb_with_salt(tmp_path):
+    """Test _decrypt_streaming directly with ECB mode and salt."""
+    from pycryptocore.csprng import generate_random_bytes
+    from pycryptocore.kdf import SALT_SIZE
+    from pycryptocore.crypto_core import aes_encrypt
+    from pycryptocore.file_io import write_all_bytes
+    
+    # First encrypt
+    plaintext = b"Hello, World!"
+    key = generate_random_bytes(16)
+    salt = generate_random_bytes(SALT_SIZE)
+    ciphertext, _ = aes_encrypt("ecb", key, plaintext, None, None)
+    
+    encrypted_file = tmp_path / "encrypted.bin"
+    write_all_bytes(encrypted_file, salt + ciphertext)
+    
+    # Now decrypt
+    decrypted_file = tmp_path / "decrypted.txt"
+    _decrypt_streaming("ecb", key, encrypted_file, decrypted_file, None, None, salt)
+    
+    assert decrypted_file.exists()
+    assert decrypted_file.read_bytes() == plaintext
+
+
+def test_decrypt_streaming_direct_ecb_without_salt(tmp_path):
+    """Test _decrypt_streaming directly with ECB mode without salt."""
+    from pycryptocore.csprng import generate_random_bytes
+    from pycryptocore.crypto_core import aes_encrypt
+    from pycryptocore.file_io import write_all_bytes
+    
+    # First encrypt
+    plaintext = b"Hello, World!"
+    key = generate_random_bytes(16)
+    ciphertext, _ = aes_encrypt("ecb", key, plaintext, None, None)
+    
+    encrypted_file = tmp_path / "encrypted.bin"
+    write_all_bytes(encrypted_file, ciphertext)
+    
+    # Now decrypt
+    decrypted_file = tmp_path / "decrypted.txt"
+    _decrypt_streaming("ecb", key, encrypted_file, decrypted_file, None, None, None)
+    
+    assert decrypted_file.exists()
+    assert decrypted_file.read_bytes() == plaintext
+
+
+def test_decrypt_streaming_error_handling(tmp_path):
+    """Test _decrypt_streaming error handling with non-existent file."""
+    from pycryptocore.csprng import generate_random_bytes
+    
+    non_existent = tmp_path / "nonexistent.bin"
+    output_file = tmp_path / "decrypted.txt"
+    key = generate_random_bytes(16)
+    
+    with pytest.raises(Exception):
+        _decrypt_streaming("cbc", key, non_existent, output_file, None, None, None)
+
+
+def test_cli_dgst_hmac_unsupported_algorithm(tmp_path, capsys):
+    """Test dgst with HMAC and unsupported algorithm (not sha256)."""
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("Hello, World!")
+    
+    result = main([
+        "dgst",
+        "--algorithm", "sha3-256",
+        "--hmac",
+        "--key", "00112233445566778899aabbccddeeff",
+        "--input", str(test_file)
+    ])
+    
+    assert result == 1
+    captured = capsys.readouterr()
+    assert "HMAC currently only supports sha256 algorithm" in captured.err
+
+
+
+
+def test_cli_dgst_output_to_file(tmp_path):
+    """Test dgst with output to file."""
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("Hello, World!")
+    output_file = tmp_path / "hash.txt"
+    
+    result = main([
+        "dgst",
+        "--algorithm", "sha256",
+        "--input", str(test_file),
+        "--output", str(output_file)
+    ])
+    
+    assert result == 0
+    assert output_file.exists()
+    content = output_file.read_text()
+    assert "test.txt" in content
+    assert len(content.split()) >= 2  # hash and filename
+
+
+def test_cli_dgst_sha3_256_output_to_file(tmp_path):
+    """Test dgst sha3-256 with output to file."""
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("Hello, World!")
+    output_file = tmp_path / "hash.txt"
+    
+    result = main([
+        "dgst",
+        "--algorithm", "sha3-256",
+        "--input", str(test_file),
+        "--output", str(output_file)
+    ])
+    
+    assert result == 0
+    assert output_file.exists()
+    content = output_file.read_text()
+    assert "test.txt" in content
 

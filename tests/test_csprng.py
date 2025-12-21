@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pytest
 
 from pycryptocore.csprng import generate_random_bytes
 
@@ -36,5 +37,53 @@ def test_basic_distribution():
     ratio = ones / total_bits
     # Accept 0.45 - 0.55 as a loose bound
     assert 0.45 <= ratio <= 0.55, f"Bit ratio out of range: {ratio}"
+
+
+def test_generate_random_bytes_invalid_type():
+    """Test generate_random_bytes with invalid type."""
+    from pycryptocore.csprng import CSPRNGError
+    
+    with pytest.raises(CSPRNGError, match="num_bytes must be an integer"):
+        generate_random_bytes("16")  # type: ignore
+
+
+def test_generate_random_bytes_negative():
+    """Test generate_random_bytes with negative number."""
+    from pycryptocore.csprng import CSPRNGError
+    
+    with pytest.raises(CSPRNGError, match="num_bytes must be non-negative"):
+        generate_random_bytes(-1)
+
+
+def test_generate_random_bytes_zero():
+    """Test generate_random_bytes with zero."""
+    result = generate_random_bytes(0)
+    assert result == b""
+
+
+def test_detect_weak_key_empty():
+    """Test detect_weak_key with empty key."""
+    from pycryptocore.csprng import detect_weak_key
+    
+    result = detect_weak_key(b"")
+    assert result is None
+
+
+def test_detect_weak_key_sequential_descending():
+    """Test detect_weak_key with sequential descending bytes."""
+    from pycryptocore.csprng import detect_weak_key
+    
+    # FF FE FD FC ...
+    key = bytes(range(255, 255 - 16, -1))
+    result = detect_weak_key(key)
+    assert result == "sequential descending bytes"
+
+
+def test_detect_weak_key_single_byte():
+    """Test detect_weak_key with single byte (edge case for _is_sequential)."""
+    from pycryptocore.csprng import detect_weak_key
+    
+    result = detect_weak_key(b"\x00")
+    assert result == "all bytes are identical"
 
 

@@ -130,6 +130,12 @@ def _decrypt_streaming(mode: str, key: bytes, input_path: Path, output_path: Pat
                     # IV only format
                     iv, _ = read_with_iv(input_path)
                     header_size = 16
+            else:
+                # IV provided, but file still has IV header that needs to be skipped
+                if salt is not None:
+                    header_size = 32  # Salt + IV
+                else:
+                    header_size = 16  # IV only
             
             with open(input_path, "rb") as inf, open(temp_plaintext, "wb") as outf:
                 # Skip header (salt + IV or just IV)
