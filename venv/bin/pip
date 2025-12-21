@@ -1,4 +1,4 @@
-#!/home/kapusta/Загрузки/CryptoCore-main/venv/bin/python3
+#!/home/kapusta/CryptoCore/venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

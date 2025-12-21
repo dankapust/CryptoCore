@@ -30,5 +30,6 @@ tests/test_csprng.py
 tests/test_gcm.py
 tests/test_hash.py
 tests/test_hmac.py
+tests/test_openssl_interop.py
 tests/test_pbkdf2.py
 tests/test_python_cli.py
