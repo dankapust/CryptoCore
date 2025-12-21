@@ -7,7 +7,7 @@ from .csprng import generate_random_bytes
 
 KEY_SIZE = 16
 SALT_SIZE = 16
-PBKDF2_ITERATIONS = 100_000
+PBKDF2_ITERATIONS = 10_000
 
 
 def derive_key_from_password(password: str, salt: bytes) -> bytes:

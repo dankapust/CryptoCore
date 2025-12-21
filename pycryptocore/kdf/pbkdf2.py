@@ -9,7 +9,7 @@ from ..mac import HMAC
 
 # Default parameters
 SALT_SIZE = 16
-PBKDF2_ITERATIONS = 100_000
+PBKDF2_ITERATIONS = 10_000
 HASH_LEN = 32  # SHA-256 output size in bytes
 
 

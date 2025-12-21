@@ -1,3 +1,0 @@
-[console_scripts]
-cryptocore = pycryptocore.cli:main
-cryptocore-py = pycryptocore.cli:main
