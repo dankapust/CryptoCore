@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Optional
+import tempfile
+import shutil
+import os
 
 
 def read_all_bytes(file_path: str | Path) -> bytes:
@@ -12,6 +15,27 @@ def read_all_bytes(file_path: str | Path) -> bytes:
 def write_all_bytes(file_path: str | Path, data: bytes) -> None:
     path = Path(file_path)
     path.write_bytes(data)
+
+
+def create_temp_file(suffix: str = ".tmp") -> Path:
+    """Create a temporary file for intermediate storage."""
+    fd, temp_path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    return Path(temp_path)
+
+
+def move_temp_to_final(temp_file: Path, final_file: Path) -> None:
+    """Move temporary file to final location atomically."""
+    shutil.move(str(temp_file), str(final_file))
+
+
+def cleanup_temp_file(temp_file: Optional[Path]) -> None:
+    """Clean up temporary file if it exists."""
+    if temp_file and temp_file.exists():
+        try:
+            temp_file.unlink()
+        except Exception:
+            pass  # Best effort cleanup
 
 
 def write_with_salt_iv(file_path: str | Path, salt: bytes, iv: bytes, ciphertext: bytes) -> None:

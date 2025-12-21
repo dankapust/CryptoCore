@@ -1,4 +1,7 @@
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, BinaryIO
+import os
+import tempfile
+from pathlib import Path
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
@@ -9,6 +12,7 @@ from .modes.gcm import GCM, AuthenticationError
 KEY_SIZE = 16  # AES-128
 BLOCK_SIZE = 16
 IV_SIZE = 16
+CHUNK_SIZE = 64 * 1024  # 64 KB chunks for streaming
 
 
 class CryptoCoreError(Exception):
@@ -221,5 +225,396 @@ def aes_decrypt(mode: str, key: bytes, ciphertext: bytes, iv: Optional[bytes] = 
         except AuthenticationError as e:
             raise CryptoCoreError(str(e))
     raise CryptoCoreError(f"Unsupported mode: {mode}")
+
+
+# ============================================================================
+# Streaming encryption/decryption functions for large files
+# ============================================================================
+
+def ecb_encrypt_stream(key: bytes, input_file: BinaryIO, output_file: BinaryIO, temp_file: Optional[Path] = None) -> None:
+    """Streaming ECB encryption."""
+    cipher = AES.new(key, AES.MODE_ECB)
+    buffer = bytearray()
+    
+    while True:
+        chunk = input_file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        
+        # Process full blocks
+        while len(buffer) >= BLOCK_SIZE:
+            block = bytes(buffer[:BLOCK_SIZE])
+            del buffer[:BLOCK_SIZE]
+            encrypted = cipher.encrypt(block)
+            output_file.write(encrypted)
+            if temp_file:
+                with open(temp_file, 'ab') as tf:
+                    tf.write(encrypted)
+    
+    # Handle remaining bytes with padding
+    if buffer:
+        padded = pad(bytes(buffer), BLOCK_SIZE)
+        for i in range(0, len(padded), BLOCK_SIZE):
+            block = padded[i:i+BLOCK_SIZE]
+            encrypted = cipher.encrypt(block)
+            output_file.write(encrypted)
+            if temp_file:
+                with open(temp_file, 'ab') as tf:
+                    tf.write(encrypted)
+
+
+def ecb_decrypt_stream(key: bytes, input_file: BinaryIO, output_file: BinaryIO, temp_file: Optional[Path] = None) -> None:
+    """Streaming ECB decryption."""
+    cipher = AES.new(key, AES.MODE_ECB)
+    buffer = bytearray()
+    last_block = None
+    
+    while True:
+        chunk = input_file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        
+        # Process full blocks
+        while len(buffer) >= BLOCK_SIZE:
+            block = bytes(buffer[:BLOCK_SIZE])
+            del buffer[:BLOCK_SIZE]
+            decrypted = cipher.decrypt(block)
+            if last_block is not None:
+                output_file.write(last_block)
+                if temp_file:
+                    with open(temp_file, 'ab') as tf:
+                        tf.write(last_block)
+            last_block = decrypted
+    
+    # Handle last block (with padding)
+    if buffer:
+        if len(buffer) % BLOCK_SIZE != 0:
+            raise CryptoCoreError("Ciphertext not multiple of block size for ECB")
+        decrypted = cipher.decrypt(bytes(buffer))
+        if last_block is not None:
+            output_file.write(last_block)
+            if temp_file:
+                with open(temp_file, 'ab') as tf:
+                    tf.write(last_block)
+        last_block = decrypted
+    
+    # Remove padding from last block
+    if last_block is not None:
+        try:
+            unpadded = unpad(last_block, BLOCK_SIZE)
+            output_file.write(unpadded)
+            if temp_file:
+                with open(temp_file, 'ab') as tf:
+                    tf.write(unpadded)
+        except ValueError as exc:
+            raise CryptoCoreError("Invalid padding or corrupted data") from exc
+
+
+def cbc_encrypt_stream(key: bytes, input_file: BinaryIO, output_file: BinaryIO, iv: Optional[bytes] = None, temp_file: Optional[Path] = None) -> bytes:
+    """Streaming CBC encryption."""
+    iv = _ensure_iv(iv)
+    cipher = AES.new(key, AES.MODE_ECB)
+    prev = iv
+    buffer = bytearray()
+    
+    while True:
+        chunk = input_file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        
+        # Process full blocks
+        while len(buffer) >= BLOCK_SIZE:
+            block = bytes(buffer[:BLOCK_SIZE])
+            del buffer[:BLOCK_SIZE]
+            x = _xor_bytes(block, prev)
+            c = cipher.encrypt(x)
+            prev = c
+            output_file.write(c)
+            if temp_file:
+                with open(temp_file, 'ab') as tf:
+                    tf.write(c)
+    
+    # Handle remaining bytes with padding
+    if buffer:
+        padded = pad(bytes(buffer), BLOCK_SIZE)
+        for i in range(0, len(padded), BLOCK_SIZE):
+            block = padded[i:i+BLOCK_SIZE]
+            x = _xor_bytes(block, prev)
+            c = cipher.encrypt(x)
+            prev = c
+            output_file.write(c)
+            if temp_file:
+                with open(temp_file, 'ab') as tf:
+                    tf.write(c)
+    
+    return iv
+
+
+def cbc_decrypt_stream(key: bytes, input_file: BinaryIO, output_file: BinaryIO, iv: bytes, temp_file: Optional[Path] = None) -> None:
+    """Streaming CBC decryption."""
+    cipher = AES.new(key, AES.MODE_ECB)
+    prev = iv
+    buffer = bytearray()
+    last_block = None
+    
+    while True:
+        chunk = input_file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        
+        # Process full blocks
+        while len(buffer) >= BLOCK_SIZE:
+            block = bytes(buffer[:BLOCK_SIZE])
+            del buffer[:BLOCK_SIZE]
+            p = _xor_bytes(cipher.decrypt(block), prev)
+            prev = block
+            if last_block is not None:
+                output_file.write(last_block)
+                if temp_file:
+                    with open(temp_file, 'ab') as tf:
+                        tf.write(last_block)
+            last_block = p
+    
+    # Handle last block (with padding)
+    if buffer:
+        if len(buffer) % BLOCK_SIZE != 0:
+            raise CryptoCoreError("Ciphertext not multiple of block size for CBC")
+        block = bytes(buffer)
+        p = _xor_bytes(cipher.decrypt(block), prev)
+        if last_block is not None:
+            output_file.write(last_block)
+            if temp_file:
+                with open(temp_file, 'ab') as tf:
+                    tf.write(last_block)
+        last_block = p
+    
+    # Remove padding from last block
+    if last_block is not None:
+        try:
+            unpadded = unpad(last_block, BLOCK_SIZE)
+            output_file.write(unpadded)
+            if temp_file:
+                with open(temp_file, 'ab') as tf:
+                    tf.write(unpadded)
+        except ValueError as exc:
+            raise CryptoCoreError("Invalid padding or corrupted data") from exc
+
+
+def cfb_encrypt_stream(key: bytes, input_file: BinaryIO, output_file: BinaryIO, iv: Optional[bytes] = None, temp_file: Optional[Path] = None) -> bytes:
+    """Streaming CFB encryption."""
+    iv = _ensure_iv(iv)
+    cipher = AES.new(key, AES.MODE_ECB)
+    prev = iv
+    buffer = bytearray()
+    
+    while True:
+        chunk = input_file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        
+        # Process in blocks
+        while len(buffer) >= BLOCK_SIZE:
+            block = bytes(buffer[:BLOCK_SIZE])
+            del buffer[:BLOCK_SIZE]
+            stream = cipher.encrypt(prev)
+            ct_block = _xor_bytes(stream[:len(block)], block)
+            prev = ct_block
+            output_file.write(ct_block)
+            if temp_file:
+                with open(temp_file, 'ab') as tf:
+                    tf.write(ct_block)
+    
+    # Handle remaining bytes
+    if buffer:
+        stream = cipher.encrypt(prev)
+        ct_block = _xor_bytes(stream[:len(buffer)], bytes(buffer))
+        prev = prev[:BLOCK_SIZE - len(ct_block)] + ct_block if len(ct_block) < BLOCK_SIZE else ct_block
+        output_file.write(ct_block)
+        if temp_file:
+            with open(temp_file, 'ab') as tf:
+                tf.write(ct_block)
+    
+    return iv
+
+
+def cfb_decrypt_stream(key: bytes, input_file: BinaryIO, output_file: BinaryIO, iv: bytes, temp_file: Optional[Path] = None) -> None:
+    """Streaming CFB decryption."""
+    cipher = AES.new(key, AES.MODE_ECB)
+    prev = iv
+    buffer = bytearray()
+    
+    while True:
+        chunk = input_file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        
+        # Process in blocks
+        while len(buffer) >= BLOCK_SIZE:
+            block = bytes(buffer[:BLOCK_SIZE])
+            del buffer[:BLOCK_SIZE]
+            stream = cipher.encrypt(prev)
+            pt_block = _xor_bytes(stream[:len(block)], block)
+            prev = block
+            output_file.write(pt_block)
+            if temp_file:
+                with open(temp_file, 'ab') as tf:
+                    tf.write(pt_block)
+    
+    # Handle remaining bytes
+    if buffer:
+        stream = cipher.encrypt(prev)
+        pt_block = _xor_bytes(stream[:len(buffer)], bytes(buffer))
+        prev = prev[:BLOCK_SIZE - len(buffer)] + bytes(buffer) if len(buffer) < BLOCK_SIZE else bytes(buffer)
+        output_file.write(pt_block)
+        if temp_file:
+            with open(temp_file, 'ab') as tf:
+                tf.write(pt_block)
+
+
+def ofb_encrypt_stream(key: bytes, input_file: BinaryIO, output_file: BinaryIO, iv: Optional[bytes] = None, temp_file: Optional[Path] = None) -> bytes:
+    """Streaming OFB encryption."""
+    iv = _ensure_iv(iv)
+    cipher = AES.new(key, AES.MODE_ECB)
+    prev = iv
+    buffer = bytearray()
+    
+    while True:
+        chunk = input_file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        
+        # Process in blocks
+        while len(buffer) >= BLOCK_SIZE:
+            block = bytes(buffer[:BLOCK_SIZE])
+            del buffer[:BLOCK_SIZE]
+            stream = cipher.encrypt(prev)
+            ct_block = _xor_bytes(stream[:len(block)], block)
+            prev = stream
+            output_file.write(ct_block)
+            if temp_file:
+                with open(temp_file, 'ab') as tf:
+                    tf.write(ct_block)
+    
+    # Handle remaining bytes
+    if buffer:
+        stream = cipher.encrypt(prev)
+        ct_block = _xor_bytes(stream[:len(buffer)], bytes(buffer))
+        prev = stream
+        output_file.write(ct_block)
+        if temp_file:
+            with open(temp_file, 'ab') as tf:
+                tf.write(ct_block)
+    
+    return iv
+
+
+def ofb_decrypt_stream(key: bytes, input_file: BinaryIO, output_file: BinaryIO, iv: bytes, temp_file: Optional[Path] = None) -> None:
+    """Streaming OFB decryption (same as encrypt)."""
+    ofb_encrypt_stream(key, input_file, output_file, iv, temp_file)
+
+
+def ctr_encrypt_stream(key: bytes, input_file: BinaryIO, output_file: BinaryIO, iv: Optional[bytes] = None, temp_file: Optional[Path] = None) -> bytes:
+    """Streaming CTR encryption."""
+    iv = _ensure_iv(iv)
+    cipher = AES.new(key, AES.MODE_ECB)
+    counter = int.from_bytes(iv, "big")
+    buffer = bytearray()
+    
+    while True:
+        chunk = input_file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        
+        # Process in blocks
+        while len(buffer) >= BLOCK_SIZE:
+            block = bytes(buffer[:BLOCK_SIZE])
+            del buffer[:BLOCK_SIZE]
+            keystream = cipher.encrypt(counter.to_bytes(16, "big"))
+            ct_block = _xor_bytes(keystream[:len(block)], block)
+            counter = (counter + 1) % (1 << 128)
+            output_file.write(ct_block)
+            if temp_file:
+                with open(temp_file, 'ab') as tf:
+                    tf.write(ct_block)
+    
+    # Handle remaining bytes
+    if buffer:
+        keystream = cipher.encrypt(counter.to_bytes(16, "big"))
+        ct_block = _xor_bytes(keystream[:len(buffer)], bytes(buffer))
+        counter = (counter + 1) % (1 << 128)
+        output_file.write(ct_block)
+        if temp_file:
+            with open(temp_file, 'ab') as tf:
+                tf.write(ct_block)
+    
+    return iv
+
+
+def ctr_decrypt_stream(key: bytes, input_file: BinaryIO, output_file: BinaryIO, iv: bytes, temp_file: Optional[Path] = None) -> None:
+    """Streaming CTR decryption (same as encrypt)."""
+    ctr_encrypt_stream(key, input_file, output_file, iv, temp_file)
+
+
+def aes_encrypt_stream(mode: str, key: bytes, input_file: BinaryIO, output_file: BinaryIO, iv: Optional[bytes] = None, aad: Optional[bytes] = None, temp_file: Optional[Path] = None) -> Optional[bytes]:
+    """Streaming encryption wrapper."""
+    if len(key) != KEY_SIZE:
+        raise CryptoCoreError("Invalid key length; expected 16 bytes for AES-128")
+    mode_lc = mode.lower()
+    
+    if mode_lc == "ecb":
+        ecb_encrypt_stream(key, input_file, output_file, temp_file)
+        return None
+    elif mode_lc == "cbc":
+        return cbc_encrypt_stream(key, input_file, output_file, iv, temp_file)
+    elif mode_lc == "cfb":
+        return cfb_encrypt_stream(key, input_file, output_file, iv, temp_file)
+    elif mode_lc == "ofb":
+        return ofb_encrypt_stream(key, input_file, output_file, iv, temp_file)
+    elif mode_lc == "ctr":
+        return ctr_encrypt_stream(key, input_file, output_file, iv, temp_file)
+    elif mode_lc == "gcm":
+        # GCM requires full data for GHASH, so we'll use non-streaming for now
+        # This could be optimized in the future
+        raise CryptoCoreError("GCM streaming not yet implemented; use non-streaming mode for GCM")
+    else:
+        raise CryptoCoreError(f"Unsupported mode: {mode}")
+
+
+def aes_decrypt_stream(mode: str, key: bytes, input_file: BinaryIO, output_file: BinaryIO, iv: Optional[bytes] = None, aad: Optional[bytes] = None, temp_file: Optional[Path] = None) -> None:
+    """Streaming decryption wrapper."""
+    if len(key) != KEY_SIZE:
+        raise CryptoCoreError("Invalid key length; expected 16 bytes for AES-128")
+    mode_lc = mode.lower()
+    
+    if mode_lc == "ecb":
+        ecb_decrypt_stream(key, input_file, output_file, temp_file)
+    elif mode_lc == "cbc":
+        if iv is None:
+            raise CryptoCoreError("IV is required for CBC")
+        cbc_decrypt_stream(key, input_file, output_file, iv, temp_file)
+    elif mode_lc == "cfb":
+        if iv is None:
+            raise CryptoCoreError("IV is required for CFB")
+        cfb_decrypt_stream(key, input_file, output_file, iv, temp_file)
+    elif mode_lc == "ofb":
+        if iv is None:
+            raise CryptoCoreError("IV is required for OFB")
+        ofb_decrypt_stream(key, input_file, output_file, iv, temp_file)
+    elif mode_lc == "ctr":
+        if iv is None:
+            raise CryptoCoreError("IV is required for CTR")
+        ctr_decrypt_stream(key, input_file, output_file, iv, temp_file)
+    elif mode_lc == "gcm":
+        raise CryptoCoreError("GCM streaming not yet implemented; use non-streaming mode for GCM")
+    else:
+        raise CryptoCoreError(f"Unsupported mode: {mode}")
 
 

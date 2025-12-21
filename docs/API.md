@@ -10,7 +10,7 @@
 - `pycryptocore.mac` — HMAC‑SHA256 и AES‑CMAC.
 - `pycryptocore.kdf` — PBKDF2‑HMAC‑SHA256 и иерархия ключей.
 - `pycryptocore.csprng` — CSPRNG на базе `os.urandom`.
-- `pycryptocore.file_io` — вспомогательные функции чтения/записи файлов и заголовков (IV, salt, nonce, tag).
+- `pycryptocore.file_io` — вспомогательные функции чтения/записи файлов и заголовков (IV, salt, nonce, tag), а также управления временными файлами для потоковой обработки.
 - `pycryptocore.cli` — точка входа для CLI (`python -m pycryptocore.cli` / команда `cryptocore`).
 
 ---
@@ -19,8 +19,9 @@
 
 ```python
 from pycryptocore.crypto_core import (
-    KEY_SIZE, BLOCK_SIZE, IV_SIZE,
+    KEY_SIZE, BLOCK_SIZE, IV_SIZE, CHUNK_SIZE,
     aes_encrypt, aes_decrypt,
+    aes_encrypt_stream, aes_decrypt_stream,
     CryptoCoreError,
 )
 ```
@@ -34,11 +35,30 @@ from pycryptocore.crypto_core import (
   - Возвращает `(ciphertext, iv_or_none)`:
     - для GCM `ciphertext` уже содержит `nonce || ciphertext || tag`, поэтому `iv_or_none` всегда `None`;
     - для остальных режимов возвращается сгенерированный IV (или `None` для ECB).
+  - **Примечание:** Для больших файлов рекомендуется использовать `aes_encrypt_stream()`.
 
 - **`aes_decrypt(mode: str, key: bytes, ciphertext: bytes, iv: Optional[bytes] = None, aad: Optional[bytes] = None) -> bytes`**
   - Расшифровывает данные в указанном режиме.
   - Для GCM ожидает формат `nonce || ciphertext || tag` (12 + N + 16 байт) либо отдельный `iv` (nonce).
   - При ошибке аутентификации/паддинга выбрасывает `CryptoCoreError`.
+  - **Примечание:** Для больших файлов рекомендуется использовать `aes_decrypt_stream()`.
+
+- **`aes_encrypt_stream(mode: str, key: bytes, input_file: BinaryIO, output_file: BinaryIO, iv: Optional[bytes] = None, aad: Optional[bytes] = None, temp_file: Optional[Path] = None) -> Optional[bytes]`**
+  - Потоковое шифрование для больших файлов.
+  - Обрабатывает данные блоками по `CHUNK_SIZE` (64 КБ).
+  - `input_file` — открытый файл для чтения (binary mode).
+  - `output_file` — открытый файл для записи (binary mode).
+  - `temp_file` — опциональный путь к промежуточному файлу для отслеживания прогресса.
+  - Возвращает IV (или `None` для ECB).
+  - **Ограничение:** GCM режим пока не поддерживает потоковую обработку.
+
+- **`aes_decrypt_stream(mode: str, key: bytes, input_file: BinaryIO, output_file: BinaryIO, iv: Optional[bytes] = None, aad: Optional[bytes] = None, temp_file: Optional[Path] = None) -> None`**
+  - Потоковое дешифрование для больших файлов.
+  - Обрабатывает данные блоками по `CHUNK_SIZE` (64 КБ).
+  - `input_file` — открытый файл для чтения (binary mode).
+  - `output_file` — открытый файл для записи (binary mode).
+  - `temp_file` — опциональный путь к промежуточному файлу для отслеживания прогресса.
+  - **Ограничение:** GCM режим пока не поддерживает потоковую обработку.
 
 ---
 

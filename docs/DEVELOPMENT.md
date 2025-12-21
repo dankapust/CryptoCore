@@ -42,9 +42,9 @@ python3 -m pip install .
 ```text
 pycryptocore/         # Основная библиотека
   cli.py              # CLI: encrypt/decrypt, dgst, derive
-  crypto_core.py      # Реализация AES-128 (ECB/CBC/CFB/OFB/CTR)
+  crypto_core.py      # Реализация AES-128 (ECB/CBC/CFB/OFB/CTR) + потоковые функции
   csprng.py           # CSPRNG и детектор слабых ключей
-  file_io.py          # Чтение/запись файлов c IV/salt/nonce/tag
+  file_io.py          # Чтение/запись файлов c IV/salt/nonce/tag + управление временными файлами
   hash/               # SHA-256 (с нуля) и SHA3-256 (hashlib)
   kdf/                # PBKDF2-HMAC-SHA256, иерархия ключей
   mac/                # HMAC-SHA256, AES-CMAC
@@ -129,13 +129,54 @@ python3 run_tests.py
 
 ---
 
-### 4. Добавление новых алгоритмов / режимов
+### 4. Потоковая обработка больших файлов
+
+**Архитектура:**
+- Для файлов **меньше 100 МБ**: используется загрузка всего файла в память (быстрее для маленьких файлов)
+- Для файлов **больше 100 МБ**: автоматически используется потоковая обработка блоками по 64 КБ
+
+**Потоковые функции:**
+- `*_encrypt_stream()` и `*_decrypt_stream()` в `crypto_core.py`
+- Обработка данных блоками по `CHUNK_SIZE` (64 КБ)
+- Промежуточные файлы для отслеживания прогресса
+- Возможность продолжения после сбоя
+
+**Добавление потоковой обработки для нового режима:**
+1. Реализуйте `xxx_encrypt_stream()` и `xxx_decrypt_stream()` функции
+2. Зарегистрируйте в `aes_encrypt_stream()` и `aes_decrypt_stream()`
+3. Обрабатывайте данные блоками, сохраняя состояние между блоками (для режимов с цепочкой)
+4. Используйте `temp_file` для отслеживания прогресса
+
+**Пример:**
+```python
+def xxx_encrypt_stream(key: bytes, input_file: BinaryIO, output_file: BinaryIO, 
+                       iv: Optional[bytes] = None, temp_file: Optional[Path] = None) -> bytes:
+    cipher = AES.new(key, AES.MODE_ECB)
+    prev = iv
+    buffer = bytearray()
+    
+    while True:
+        chunk = input_file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        # Обработка блоков...
+        output_file.write(encrypted)
+        if temp_file:
+            with open(temp_file, 'ab') as tf:
+                tf.write(encrypted)
+    
+    return iv
+```
+
+### 5. Добавление новых алгоритмов / режимов
 
 **AES‑режимы**  
 Новые режимы шифрования стоит реализовывать по аналогии с существующими в `crypto_core.py`:
 
 - добавьте функции `xxx_encrypt` / `xxx_decrypt`;
-- зарегистрируйте режим в `aes_encrypt` / `aes_decrypt`;
+- добавьте потоковые функции `xxx_encrypt_stream` / `xxx_decrypt_stream` для больших файлов;
+- зарегистрируйте режим в `aes_encrypt` / `aes_decrypt` и `aes_encrypt_stream` / `aes_decrypt_stream`;
 - при необходимости используйте `file_io` для форматов файлов;
 - добавьте тесты в `tests/` с известными векторами.
 
@@ -153,7 +194,7 @@ python3 run_tests.py
 
 ---
 
-### 5. CLI: расширение и поддержка
+### 6. CLI: расширение и поддержка
 
 Модуль `pycryptocore.cli` реализует:
 
@@ -169,7 +210,7 @@ python3 run_tests.py
 
 ---
 
-### 6. Интероперабельность с OpenSSL
+### 7. Интероперабельность с OpenSSL
 
 Файл `tests/test_openssl_interop.py` покрывает:
 

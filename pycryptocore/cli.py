@@ -7,7 +7,11 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .crypto_core import aes_encrypt, aes_decrypt, KEY_SIZE, CryptoCoreError
+from .crypto_core import (
+    aes_encrypt, aes_decrypt, 
+    aes_encrypt_stream, aes_decrypt_stream,
+    KEY_SIZE, BLOCK_SIZE, CryptoCoreError, CHUNK_SIZE
+)
 from .hash import SHA256, SHA3_256
 from .mac import HMAC, CMAC
 from .kdf import (
@@ -26,6 +30,9 @@ from .file_io import (
     read_with_iv,
     write_with_nonce_tag,
     read_with_nonce_tag,
+    create_temp_file,
+    move_temp_to_final,
+    cleanup_temp_file,
 )
 from .csprng import generate_random_bytes, detect_weak_key
 
@@ -38,6 +45,107 @@ def _hex_to_bytes(hex_str: str, expected_len: Optional[int] = None) -> bytes:
     if expected_len is not None and len(b) != expected_len:
         raise SystemExit(f"Invalid length: expected {expected_len} bytes")
     return b
+
+
+def _should_use_streaming(input_path: Path) -> bool:
+    """Determine if streaming should be used based on file size."""
+    try:
+        file_size = input_path.stat().st_size
+        # Use streaming for files larger than 100 MB
+        return file_size > 100 * 1024 * 1024
+    except Exception:
+        # If we can't determine size, use streaming to be safe
+        return True
+
+
+def _encrypt_streaming(mode: str, key: bytes, input_path: Path, output_path: Path, 
+                       iv: Optional[bytes] = None, aad: Optional[bytes] = None,
+                       salt: Optional[bytes] = None) -> Optional[bytes]:
+    """Encrypt using streaming mode with temporary file support."""
+    temp_ciphertext = None
+    temp_progress = None
+    try:
+        # Create temporary file for intermediate storage (progress tracking)
+        temp_ciphertext = create_temp_file(suffix=".enc.tmp")
+        temp_progress = create_temp_file(suffix=".progress.tmp")
+        
+        with open(input_path, "rb") as inf, open(temp_ciphertext, "wb") as outf:
+            iv_result = aes_encrypt_stream(mode, key, inf, outf, iv, aad, temp_progress)
+        
+        # Read the ciphertext from temp file
+        ciphertext = read_all_bytes(temp_ciphertext)
+        
+        # Write to final output with proper format
+        if mode == "gcm":
+            write_all_bytes(output_path, ciphertext)
+        elif iv_result is not None:
+            if salt is not None:
+                write_with_salt_iv(output_path, salt, iv_result, ciphertext)
+            else:
+                write_with_iv(output_path, iv_result, ciphertext)
+        else:
+            if salt is not None:
+                write_all_bytes(output_path, salt + ciphertext)
+            else:
+                write_all_bytes(output_path, ciphertext)
+        
+        # Cleanup temporary files
+        cleanup_temp_file(temp_ciphertext)
+        cleanup_temp_file(temp_progress)
+        return iv_result
+    except Exception as e:
+        # Cleanup on error
+        cleanup_temp_file(temp_ciphertext)
+        cleanup_temp_file(temp_progress)
+        raise e
+
+
+def _decrypt_streaming(mode: str, key: bytes, input_path: Path, output_path: Path,
+                       iv: Optional[bytes] = None, aad: Optional[bytes] = None,
+                       salt: Optional[bytes] = None) -> None:
+    """Decrypt using streaming mode with temporary file support."""
+    temp_plaintext = None
+    temp_progress = None
+    try:
+        # Create temporary file for intermediate storage (progress tracking)
+        temp_plaintext = create_temp_file(suffix=".dec.tmp")
+        temp_progress = create_temp_file(suffix=".progress.tmp")
+        
+        # Read IV/salt if needed
+        if mode == "ecb":
+            with open(input_path, "rb") as inf, open(temp_plaintext, "wb") as outf:
+                # Skip salt if present
+                if salt is not None:
+                    inf.seek(16)  # Skip salt
+                aes_decrypt_stream(mode, key, inf, outf, None, aad, temp_progress)
+        else:
+            # Read IV from file if not provided
+            header_size = 0
+            if iv is None:
+                if salt is not None:
+                    # Salt + IV format
+                    salt_read, iv, _ = read_with_salt_iv(input_path)
+                    header_size = 32
+                else:
+                    # IV only format
+                    iv, _ = read_with_iv(input_path)
+                    header_size = 16
+            
+            with open(input_path, "rb") as inf, open(temp_plaintext, "wb") as outf:
+                # Skip header (salt + IV or just IV)
+                inf.seek(header_size)
+                aes_decrypt_stream(mode, key, inf, outf, iv, aad, temp_progress)
+        
+        # Move temp file to final location (atomic operation)
+        if temp_plaintext.exists():
+            move_temp_to_final(temp_plaintext, output_path)
+        
+        cleanup_temp_file(temp_progress)
+    except Exception as e:
+        # Cleanup on error
+        cleanup_temp_file(temp_plaintext)
+        cleanup_temp_file(temp_progress)
+        raise e
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -322,7 +430,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("Invalid algorithm", file=sys.stderr)
         return 1
 
-    in_bytes = read_all_bytes(args.input)
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print("Input file not found", file=sys.stderr)
+        return 1
+    
+    # Determine if we should use streaming
+    use_streaming = _should_use_streaming(input_path)
     
     # Parse AAD if provided
     aad_bytes = None
@@ -341,49 +455,67 @@ def main(argv: Optional[list[str]] = None) -> int:
                 # derive key + generate iv
                 salt = generate_salt()
                 key = derive_key_from_password(args.password, salt)
-                ciphertext, iv = aes_encrypt(args.mode, key, in_bytes, None, aad_bytes)
-                if args.mode == "gcm":
-                    # GCM: nonce is included in ciphertext, format is nonce || ciphertext || tag
-                    out_path = args.output or (str(args.input) + ".enc")
-                    write_all_bytes(out_path, ciphertext)
-                elif iv is not None:
-                    write_with_salt_iv(args.output, salt, iv, ciphertext)
+                out_path = Path(args.output or (str(args.input) + ".enc"))
+                
+                if use_streaming and args.mode != "gcm":
+                    # Use streaming for large files (except GCM)
+                    iv = _encrypt_streaming(args.mode, key, input_path, out_path, None, aad_bytes, salt)
                 else:
-                    # ECB: salt + ciphertext (no iv)
-                    out_path = args.output or (str(args.input) + ".enc")
-                    write_all_bytes(out_path, salt + ciphertext)
+                    # Use non-streaming for small files or GCM
+                    in_bytes = read_all_bytes(args.input)
+                    ciphertext, iv = aes_encrypt(args.mode, key, in_bytes, None, aad_bytes)
+                    if args.mode == "gcm":
+                        # GCM: nonce is included in ciphertext, format is nonce || ciphertext || tag
+                        write_all_bytes(out_path, ciphertext)
+                    elif iv is not None:
+                        write_with_salt_iv(out_path, salt, iv, ciphertext)
+                    else:
+                        # ECB: salt + ciphertext (no iv)
+                        write_all_bytes(out_path, salt + ciphertext)
             elif args.key:
                 key = _hex_to_bytes(args.key, expected_len=KEY_SIZE)
                 reason = detect_weak_key(key)
                 if reason:
                     print(f"[WARN] Weak key detected: {reason}", file=sys.stderr)
-                ciphertext, iv = aes_encrypt(args.mode, key, in_bytes, None, aad_bytes)
-                if args.mode == "gcm":
-                    # GCM: nonce is included in ciphertext
-                    out_path = args.output or (str(args.input) + ".enc")
-                    write_all_bytes(out_path, ciphertext)
-                elif iv is not None:
-                    out_path = args.output or (str(args.input) + ".enc")
-                    write_with_iv(out_path, iv, ciphertext)
+                out_path = Path(args.output or (str(args.input) + ".enc"))
+                
+                if use_streaming and args.mode != "gcm":
+                    # Use streaming for large files (except GCM)
+                    iv = _encrypt_streaming(args.mode, key, input_path, out_path, None, aad_bytes, None)
                 else:
-                    out_path = args.output or (str(args.input) + ".enc")
-                    write_all_bytes(out_path, ciphertext)
+                    # Use non-streaming for small files or GCM
+                    in_bytes = read_all_bytes(args.input)
+                    ciphertext, iv = aes_encrypt(args.mode, key, in_bytes, None, aad_bytes)
+                    if args.mode == "gcm":
+                        # GCM: nonce is included in ciphertext
+                        write_all_bytes(out_path, ciphertext)
+                    elif iv is not None:
+                        write_with_iv(out_path, iv, ciphertext)
+                    else:
+                        write_all_bytes(out_path, ciphertext)
             else:
                 # No key or password provided: generate random key
                 key = generate_random_bytes(KEY_SIZE)
                 print(f"[INFO] Generated random key: {key.hex()}")
-                ciphertext, iv = aes_encrypt(args.mode, key, in_bytes, None, aad_bytes)
-                if args.mode == "gcm":
-                    # GCM: nonce is included in ciphertext
-                    out_path = args.output or (str(args.input) + ".enc")
-                    write_all_bytes(out_path, ciphertext)
-                elif iv is not None:
-                    out_path = args.output or (str(args.input) + ".enc")
-                    write_with_iv(out_path, iv, ciphertext)
+                out_path = Path(args.output or (str(args.input) + ".enc"))
+                
+                if use_streaming and args.mode != "gcm":
+                    # Use streaming for large files (except GCM)
+                    iv = _encrypt_streaming(args.mode, key, input_path, out_path, None, aad_bytes, None)
                 else:
-                    out_path = args.output or (str(args.input) + ".enc")
-                    write_all_bytes(out_path, ciphertext)
+                    # Use non-streaming for small files or GCM
+                    in_bytes = read_all_bytes(args.input)
+                    ciphertext, iv = aes_encrypt(args.mode, key, in_bytes, None, aad_bytes)
+                    if args.mode == "gcm":
+                        # GCM: nonce is included in ciphertext
+                        write_all_bytes(out_path, ciphertext)
+                    elif iv is not None:
+                        write_with_iv(out_path, iv, ciphertext)
+                    else:
+                        write_all_bytes(out_path, ciphertext)
         else:  # decrypt
+            out_path = Path(args.output or (str(args.input) + ".dec"))
+            
             if args.password:
                 if args.mode == "ecb":
                     # ECB with password: file contains salt + ciphertext
@@ -393,10 +525,23 @@ def main(argv: Optional[list[str]] = None) -> int:
                         return 1
                     salt, ciphertext = data[:16], data[16:]
                     key = derive_key_from_password(args.password, salt)
-                    plaintext = aes_decrypt(args.mode, key, ciphertext, None)
+                    
+                    if use_streaming:
+                        # Create a temporary file with just ciphertext
+                        temp_input = create_temp_file(suffix=".ciphertext.tmp")
+                        write_all_bytes(temp_input, ciphertext)
+                        try:
+                            _decrypt_streaming(args.mode, key, temp_input, out_path, None, aad_bytes, salt)
+                        finally:
+                            cleanup_temp_file(temp_input)
+                    else:
+                        plaintext = aes_decrypt(args.mode, key, ciphertext, None)
+                        write_all_bytes(out_path, plaintext)
                 else:
                     if args.mode == "gcm":
                         # GCM: nonce is included in ciphertext
+                        if use_streaming:
+                            raise CryptoCoreError("GCM streaming not yet implemented; use non-streaming mode for GCM")
                         data = read_all_bytes(args.input)
                         key = derive_key_from_password(args.password, data[:16])  # First 16 bytes are salt
                         # For GCM with password, we need to handle salt separately
@@ -409,9 +554,18 @@ def main(argv: Optional[list[str]] = None) -> int:
                     else:
                         salt, iv, ciphertext = read_with_salt_iv(args.input)
                         key = derive_key_from_password(args.password, salt)
-                        plaintext = aes_decrypt(args.mode, key, ciphertext, iv, aad_bytes)
-                out_path = args.output or (str(args.input) + ".dec")
-                write_all_bytes(out_path, plaintext)
+                        
+                        if use_streaming:
+                            # Create a temporary file with just ciphertext
+                            temp_input = create_temp_file(suffix=".ciphertext.tmp")
+                            write_all_bytes(temp_input, ciphertext)
+                            try:
+                                _decrypt_streaming(args.mode, key, temp_input, out_path, iv, aad_bytes, salt)
+                            finally:
+                                cleanup_temp_file(temp_input)
+                        else:
+                            plaintext = aes_decrypt(args.mode, key, ciphertext, iv, aad_bytes)
+                            write_all_bytes(out_path, plaintext)
             else:
                 if not args.key:
                     print("--key is required for decryption when --password is not provided", file=sys.stderr)
@@ -420,13 +574,19 @@ def main(argv: Optional[list[str]] = None) -> int:
                 reason = detect_weak_key(key)
                 if reason:
                     print(f"[WARN] Weak key detected: {reason}", file=sys.stderr)
+                
                 if args.mode == "ecb":
-                    # ECB: просто расшифровываем весь вход и записываем результат в файл
-                    plaintext = aes_decrypt(args.mode, key, in_bytes, None, aad_bytes)
-                    out_path = args.output or (str(args.input) + ".dec")
-                    write_all_bytes(out_path, plaintext)
+                    if use_streaming:
+                        _decrypt_streaming(args.mode, key, input_path, out_path, None, aad_bytes, None)
+                    else:
+                        in_bytes = read_all_bytes(args.input)
+                        plaintext = aes_decrypt(args.mode, key, in_bytes, None, aad_bytes)
+                        write_all_bytes(out_path, plaintext)
                 elif args.mode == "gcm":
+                    if use_streaming:
+                        raise CryptoCoreError("GCM streaming not yet implemented; use non-streaming mode for GCM")
                     # GCM: format is nonce (12 bytes) || ciphertext || tag (16 bytes)
+                    in_bytes = read_all_bytes(args.input)
                     if args.iv:
                         # Nonce provided separately via --iv, so in_bytes is ciphertext || tag
                         nonce = _hex_to_bytes(args.iv, expected_len=12)
@@ -434,17 +594,23 @@ def main(argv: Optional[list[str]] = None) -> int:
                     else:
                         # Nonce is included in file (first 12 bytes)
                         plaintext = aes_decrypt(args.mode, key, in_bytes, None, aad_bytes)
-                    out_path = args.output or (str(args.input) + ".dec")
                     write_all_bytes(out_path, plaintext)
                 else:
-                    if args.iv:
-                        iv = _hex_to_bytes(args.iv, expected_len=16)
-                        plaintext = aes_decrypt(args.mode, key, in_bytes, iv, aad_bytes)
+                    if use_streaming:
+                        if args.iv:
+                            iv = _hex_to_bytes(args.iv, expected_len=16)
+                        else:
+                            iv, _ = read_with_iv(args.input)
+                        _decrypt_streaming(args.mode, key, input_path, out_path, iv, aad_bytes, None)
                     else:
-                        iv, ciphertext = read_with_iv(args.input)
-                        plaintext = aes_decrypt(args.mode, key, ciphertext, iv, aad_bytes)
-                    out_path = args.output or (str(args.input) + ".dec")
-                    write_all_bytes(out_path, plaintext)
+                        in_bytes = read_all_bytes(args.input)
+                        if args.iv:
+                            iv = _hex_to_bytes(args.iv, expected_len=16)
+                            plaintext = aes_decrypt(args.mode, key, in_bytes, iv, aad_bytes)
+                        else:
+                            iv, ciphertext = read_with_iv(args.input)
+                            plaintext = aes_decrypt(args.mode, key, ciphertext, iv, aad_bytes)
+                        write_all_bytes(out_path, plaintext)
     except SystemExit:
         raise
     except CryptoCoreError as exc:
