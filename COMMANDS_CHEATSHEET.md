@@ -65,6 +65,19 @@ python3 -m pip install .
 
 ### 1. Тесты
 
+**Рекомендуемый способ (универсальный скрипт):**
+
+```bash
+# Автоматически определяет доступность pytest и запускает соответствующие тесты
+python3 all_tests.py
+
+# Только базовые тесты (без pytest)
+python3 all_tests.py --simple
+
+# С pytest, но без покрытия (быстрее)
+python3 all_tests.py --no-cov
+```
+
 **Быстрые встроенные тесты проекта:**
 
 ```bash
@@ -90,26 +103,29 @@ python3 -m pip install -r requirements.txt
 
 ```bash
 # Тесты БЕЗ покрытия (быстрее)
+python3 -m pytest --no-cov
+# или просто (если pytest в PATH)
 pytest --no-cov
 
 # Тесты С покрытием (по умолчанию, настроено в pytest.ini)
+python3 -m pytest
+# или
 pytest
 
 # Тесты с покрытием и детальным отчетом (показывает непокрытые строки)
-pytest --cov-report=term-missing
+python3 -m pytest --cov-report=term-missing
 
 # Тесты с покрытием и HTML-отчетом (создается в htmlcov/index.html)
-pytest --cov-report=html
-
-# Тесты с покрытием, детальным отчетом И HTML-отчетом
-pytest --cov-report=term-missing --cov-report=html
+python3 -m pytest --cov-report=html
 
 # Запуск конкретного тестового файла
-pytest tests/test_crypto_core.py
+python3 -m pytest tests/test_crypto_core.py
 
 # Запуск конкретного теста
-pytest tests/test_crypto_core.py::test_aes_encrypt_ecb
+python3 -m pytest tests/test_crypto_core.py::test_aes_encrypt_ecb
 ```
+
+**Примечание:** Если команда `pytest` не найдена, используйте `python3 -m pytest` или `python3 all_tests.py`.
 
 ---
 

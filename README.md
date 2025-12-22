@@ -38,12 +38,36 @@ source .venv/bin/activate
 python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.txt
 python3 -m pip install .
+```
 
+**3. Запуск тестов:**
+
+**Вариант 1: Универсальный скрипт (рекомендуется)**
+```bash
+# Автоматически определяет, доступен ли pytest, и запускает соответствующие тесты
+python3 all_tests.py
+
+# Только базовые тесты (без pytest)
+python3 all_tests.py --simple
+
+# С pytest, но без покрытия (быстрее)
+python3 all_tests.py --no-cov
+```
+
+**Вариант 2: Через pytest (если установлен)**
+```bash
 # Запуск тестов с покрытием (по умолчанию)
+python3 -m pytest
+# или просто
 pytest
 
-# Или тесты без покрытия (быстрее)
-pytest --no-cov
+# Тесты без покрытия (быстрее)
+python3 -m pytest --no-cov
+```
+
+**Вариант 3: Базовые тесты (без pytest)**
+```bash
+python3 run_tests.py
 ```
 
 **Примечание:** OpenSSL требуется для тестов интероперабельности (`tests/test_openssl_interop.py`). Без OpenSSL эти тесты будут пропущены, но основная функциональность CryptoCore работает без него.
@@ -533,12 +557,14 @@ project_root/
 ├── docs/                  # Документация (Sprint 8)
 │   ├── API.md
 │   ├── USERGUIDE.md
-│   └── DEVELOPMENT.md
-├── pyproject.toml        # Конфигурация Python
-├── requirements.txt      # Зависимости
+│   ├── DEVELOPMENT.md
+├── pyproject.toml        # Конфигурация Python пакета (см. docs/CONFIG_FILES.md)
+├── pytest.ini            # Конфигурация pytest и покрытия кода (см. docs/CONFIG_FILES.md)
+├── requirements.txt      # Зависимости проекта
 ├── build_py.bat          # Скрипт сборки (Windows)
 ├── run_tests_py.sh       # Скрипт тестирования (Linux/macOS)
-├── run_tests.py          # Скрипт тестирования (Python)
+├── run_tests.py          # Скрипт базового тестирования (Python)
+├── all_tests.py          # Универсальный скрипт для запуска всех тестов
 └── README.md
 ```
 
