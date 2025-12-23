@@ -234,6 +234,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             salt = generate_salt(SALT_SIZE)
 
         # Derive key
+        if derive_args.iterations > 10000:
+            print(f"[INFO] Deriving key with {derive_args.iterations:,} iterations (this may take a while)...", file=sys.stderr)
         derived_key = pbkdf2_hmac_sha256(pwd_str, salt, derive_args.iterations, derive_args.length)
 
         # Output raw key to file if requested
